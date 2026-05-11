@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>朝までそれ正解</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ホーム画面 -->
+  <div id="screen-home" class="screen active">
+    <div class="screen-inner">
+      <div class="title-area">
+        <h1 class="game-title">朝まで<br>それ正解</h1>
+        <p class="game-subtitle">みんなで答えを合わせよう！</p>
+      </div>
+      <div class="form-area">
+        <div class="input-group">
+          <label for="input-name">あなたの名前</label>
+          <input type="text" id="input-name" placeholder="名前を入力" maxlength="20" autocomplete="off">
+        </div>
+        <button class="btn btn-primary btn-large" id="btn-create-room">
+          ルームを作る
+        </button>
+        <div class="divider"><span>または</span></div>
+        <div class="input-group">
+          <label for="input-room-code">ルームコード</label>
+          <input type="text" id="input-room-code" placeholder="6文字のコード" maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+        </div>
+        <button class="btn btn-secondary btn-large" id="btn-join-room">
+          ルームに参加
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ロビー画面 -->
+  <div id="screen-lobby" class="screen">
+    <div class="screen-inner">
+      <h2 class="screen-title">待機室</h2>
+      <div class="room-code-area">
+        <p class="room-code-label">ルームコード</p>
+        <div class="room-code-display" id="display-room-code">------</div>
+        <button class="btn btn-ghost btn-small" id="btn-copy-code">コピー</button>
+      </div>
+      <div class="players-section">
+        <p class="section-label">参加者 (<span id="player-count">0</span>人)</p>
+        <ul class="player-list" id="lobby-player-list"></ul>
+      </div>
+      <div class="host-controls" id="host-controls" style="display:none;">
+        <div class="input-group">
+          <label>ラウンド数</label>
+          <div class="rounds-selector">
+            <button class="btn btn-round-select" data-rounds="3">3</button>
+            <button class="btn btn-round-select active" data-rounds="5">5</button>
+            <button class="btn btn-round-select" data-rounds="7">7</button>
+            <button class="btn btn-round-select" data-rounds="10">10</button>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-large" id="btn-start-game">ゲームスタート！</button>
+      </div>
+      <div class="guest-waiting" id="guest-waiting" style="display:none;">
+        <div class="waiting-animation">
+          <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        </div>
+        <p>ホストがゲームを開始するのを待っています</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- お題設定画面（ホスト用） -->
+  <div id="screen-topic" class="screen">
+    <div class="screen-inner">
+      <div class="round-badge" id="topic-round-badge">第1ラウンド</div>
+      <h2 class="screen-title">お題を決めよう</h2>
+      <div class="form-area">
+        <div class="input-group">
+          <label for="input-topic">お題</label>
+          <textarea id="input-topic" placeholder="例：「あ」から始まる食べ物といえば？" maxlength="100" rows="3"></textarea>
+        </div>
+        <button class="btn btn-ghost btn-large" id="btn-random-topic">
+          🎲 ランダムお題
+        </button>
+        <button class="btn btn-primary btn-large" id="btn-set-topic">
+          このお題で決定！
+        </button>
+      </div>
+      <div class="guest-waiting" style="display:none;" id="topic-guest-waiting">
+        <div class="waiting-animation">
+          <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        </div>
+        <p>ホストがお題を決めています...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 回答入力画面 -->
+  <div id="screen-submitting" class="screen">
+    <div class="screen-inner">
+      <div class="round-badge" id="submitting-round-badge">第1ラウンド</div>
+      <div class="topic-display" id="submitting-topic">お題</div>
+      <div class="answer-form" id="answer-form">
+        <div class="input-group">
+          <label for="input-answer">あなたの答えは？</label>
+          <textarea id="input-answer" placeholder="回答を入力してください" maxlength="100" rows="3"></textarea>
+        </div>
+        <button class="btn btn-primary btn-large" id="btn-submit-answer">送信する</button>
+      </div>
+      <div class="submitted-message" id="submitted-message" style="display:none;">
+        <div class="check-icon">✓</div>
+        <p>回答を送信しました！</p>
+      </div>
+      <div class="answer-progress">
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="answer-progress-bar"></div>
+        </div>
+        <p class="progress-text"><span id="submitted-count">0</span>人 / <span id="total-count">0</span>人 回答済み</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 回答公開画面 -->
+  <div id="screen-revealing" class="screen">
+    <div class="screen-inner">
+      <div class="round-badge" id="revealing-round-badge">第1ラウンド</div>
+      <div class="topic-display" id="revealing-topic">お題</div>
+      <ul class="answer-list" id="revealed-answers-list"></ul>
+      <div class="host-reveal-controls" id="host-reveal-controls" style="display:none;">
+        <button class="btn btn-secondary btn-large" id="btn-reveal-next">次の回答を公開</button>
+        <button class="btn btn-primary btn-large" id="btn-end-round" style="display:none;">このラウンドを終了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ラウンド結果画面 -->
+  <div id="screen-round-result" class="screen">
+    <div class="screen-inner">
+      <div class="round-badge" id="result-round-badge">第1ラウンド 結果</div>
+      <h2 class="screen-title">正解の回答</h2>
+      <div class="correct-answers-display" id="correct-answers-display"></div>
+      <h3 class="section-label" style="margin-top:24px;">現在のスコア</h3>
+      <ul class="score-list" id="round-score-list"></ul>
+      <div class="host-controls" id="result-host-controls" style="display:none;">
+        <button class="btn btn-primary btn-large" id="btn-next-round">次のラウンドへ →</button>
+      </div>
+      <div class="guest-waiting" id="result-guest-waiting" style="display:none;">
+        <div class="waiting-animation">
+          <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        </div>
+        <p>ホストが次のラウンドへ進むのを待っています</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ゲーム終了画面 -->
+  <div id="screen-finished" class="screen">
+    <div class="screen-inner">
+      <h2 class="screen-title final-title">最終結果！</h2>
+      <div class="final-winner" id="final-winner"></div>
+      <ul class="score-list final-score-list" id="final-score-list"></ul>
+      <button class="btn btn-primary btn-large" id="btn-play-again">もう一度遊ぶ</button>
+    </div>
+  </div>
+
+  <!-- トースト通知 -->
+  <div class="toast" id="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
