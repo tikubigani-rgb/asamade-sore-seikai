@@ -34,6 +34,17 @@
         <button class="btn btn-secondary btn-large" id="btn-join-room">
           ルームに参加
         </button>
+        <div class="divider"><span>または</span></div>
+        <div class="rejoin-section">
+          <p class="rejoin-label">サーバーエラーで退出した場合はこちら</p>
+          <div class="input-group">
+            <label for="input-rejoin-code">再入室するルームコード</label>
+            <input type="text" id="input-rejoin-code" placeholder="6文字のコード" maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+          </div>
+          <button class="btn btn-outline btn-large" id="btn-rejoin-room">
+            途中から再入室
+          </button>
+        </div>
       </div>
     </div>
   </div>

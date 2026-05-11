@@ -454,6 +454,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') document.getElementById('btn-join-room').click();
   });
 
+  // 再入室ボタン
+  document.getElementById('btn-rejoin-room').addEventListener('click', () => {
+    const name = (document.getElementById('input-name').value || '').trim();
+    const code = (document.getElementById('input-rejoin-code').value || '').trim().toUpperCase();
+    if (!name) {
+      showToast('名前を入力してください');
+      document.getElementById('input-name').focus();
+      return;
+    }
+    if (!code || code.length !== 6) {
+      showToast('6文字のルームコードを入力してください');
+      document.getElementById('input-rejoin-code').focus();
+      return;
+    }
+    savePlayerName(name);
+    socket.emit('rejoin-room', { roomId: code, playerName: name });
+  });
+
+  // Enterキーで再入室（再入室コード入力欄）
+  document.getElementById('input-rejoin-code').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-rejoin-room').click();
+  });
+
   // ===== ロビー画面 =====
 
   // コードコピーボタン
@@ -576,8 +599,23 @@ document.addEventListener('DOMContentLoaded', () => {
     hostPlayerId = null;
     isHost = false;
     selectedRounds = 5;
+    totalPlayers = 0;
+    currentRoundNum = 1;
+    totalRoundsNum = 5;
     resetRevealScreen();
     currentCorrectAnswers = new Set();
+    undoStack = [];
+    redoStack = [];
+    // キャンバスをリセット
+    const canvas = document.getElementById('answer-canvas');
+    if (canvas) clearCanvas(canvas);
+    // 回答フォームを再表示状態に戻す
+    const answerForm = document.getElementById('answer-form');
+    if (answerForm) answerForm.style.display = 'block';
+    const submittedMsg = document.getElementById('submitted-message');
+    if (submittedMsg) submittedMsg.style.display = 'none';
+    const submitBtn = document.getElementById('btn-submit-answer');
+    if (submitBtn) submitBtn.disabled = false;
     setHashRoomCode('');
     showScreen('screen-home');
   });
@@ -610,12 +648,12 @@ socket.on('room-created', ({ roomId, playerId }) => {
 });
 
 // --- ルーム参加完了 ---
-socket.on('room-joined', ({ roomId, players, isHost: hostFlag, playerId }) => {
+socket.on('room-joined', ({ roomId, players, isHost: hostFlag, playerId, hostId }) => {
   myPlayerId = playerId;
   myRoomId = roomId;
   isHost = hostFlag;
-  // 参加時のホストは先頭プレイヤー（サーバーがホスト情報を渡さないため）
-  hostPlayerId = players.length > 0 ? players[0].id : null;
+  // サーバーから正確なホストIDを受け取る（フォールバック：先頭プレイヤー）
+  hostPlayerId = hostId || (players.length > 0 ? players[0].id : null);
 
   document.getElementById('display-room-code').textContent = roomId;
   setHashRoomCode(roomId);
@@ -631,7 +669,8 @@ socket.on('room-joined', ({ roomId, players, isHost: hostFlag, playerId }) => {
 });
 
 // --- 他のプレイヤーが参加 ---
-socket.on('player-joined', ({ players }) => {
+socket.on('player-joined', ({ players, hostId }) => {
+  if (hostId) hostPlayerId = hostId;
   renderLobbyPlayers(players);
   totalPlayers = players.length;
   showToast('新しいプレイヤーが参加しました');
@@ -699,13 +738,12 @@ socket.on('game-started', ({ currentRound, totalRounds, isHost: hostFlag }) => {
   }
 });
 
-// --- ランダムお題が届いた（変更1: charとwordに分解してフォームへ）---
-socket.on('random-topic', ({ topic }) => {
-  const { char, word } = parseTopicString(topic);
+// --- ランダムお題が届いた（charとtopicを直接フォームへ）---
+socket.on('random-topic', ({ topic, char }) => {
   const charInput = document.getElementById('input-topic-char');
   const wordInput = document.getElementById('input-topic-word');
   if (charInput) charInput.value = char;
-  if (wordInput) wordInput.value = word;
+  if (wordInput) wordInput.value = topic;
   updateTopicPreview();
 });
 
@@ -993,6 +1031,148 @@ socket.on('game-ended', ({ finalScores }) => {
 
   renderScoreList(finalScores, 'final-score-list');
   showScreen('screen-finished');
+});
+
+// --- 再入室成功 ---
+socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount }) => {
+  myPlayerId = playerId;
+  myRoomId = roomId;
+  hostPlayerId = hostId;
+  isHost = hostFlag;
+  currentRoundNum = currentRound;
+  totalRoundsNum = totalRounds;
+  totalPlayers = players.length;
+
+  setHashRoomCode(roomId);
+  showToast('再入室しました！', 3000);
+
+  if (gameState === 'waiting') {
+    // ロビー画面へ
+    document.getElementById('display-room-code').textContent = roomId;
+    renderLobbyPlayers(players);
+    if (isHost) {
+      document.getElementById('host-controls').style.display = 'block';
+      document.getElementById('guest-waiting').style.display = 'none';
+    } else {
+      document.getElementById('host-controls').style.display = 'none';
+      document.getElementById('guest-waiting').style.display = 'block';
+    }
+    showScreen('screen-lobby');
+
+  } else if (gameState === 'topic-setting') {
+    // お題設定画面へ
+    document.getElementById('topic-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
+    if (isHost) {
+      document.getElementById('screen-topic').querySelector('.form-area').style.display = 'flex';
+      document.getElementById('topic-guest-waiting').style.display = 'none';
+      document.getElementById('input-topic-char').value = '';
+      document.getElementById('input-topic-word').value = '';
+      updateTopicPreview();
+    } else {
+      document.getElementById('screen-topic').querySelector('.form-area').style.display = 'none';
+      document.getElementById('topic-guest-waiting').style.display = 'block';
+    }
+    showScreen('screen-topic');
+
+  } else if (gameState === 'submitting') {
+    // 回答入力画面へ
+    const canvas = document.getElementById('answer-canvas');
+    if (canvas) {
+      clearCanvas(canvas);
+      undoStack = [];
+      redoStack = [];
+    }
+
+    document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
+    document.getElementById('submitting-topic').textContent = topic;
+
+    const revealingTopic = document.getElementById('revealing-topic');
+    if (revealingTopic) revealingTopic.textContent = topic;
+
+    document.getElementById('submitted-count').textContent = submittedCount;
+    document.getElementById('total-count').textContent = totalCount;
+    const pct = totalCount > 0 ? (submittedCount / totalCount) * 100 : 0;
+    document.getElementById('answer-progress-bar').style.width = pct + '%';
+
+    resetRevealScreen();
+
+    if (hasSubmitted) {
+      // すでに回答済み
+      document.getElementById('answer-form').style.display = 'none';
+      document.getElementById('submitted-message').style.display = 'block';
+      const submitBtn = document.getElementById('btn-submit-answer');
+      if (submitBtn) submitBtn.disabled = true;
+    } else {
+      document.getElementById('answer-form').style.display = 'block';
+      document.getElementById('submitted-message').style.display = 'none';
+      const submitBtn = document.getElementById('btn-submit-answer');
+      if (submitBtn) submitBtn.disabled = false;
+    }
+    showScreen('screen-submitting');
+
+  } else if (gameState === 'revealing') {
+    // 回答公開画面へ（回答公開中に再入室）
+    document.getElementById('submitting-topic').textContent = topic;
+    const revealingTopic = document.getElementById('revealing-topic');
+    if (revealingTopic) revealingTopic.textContent = topic;
+
+    const badge = document.getElementById('revealing-round-badge');
+    if (badge) badge.textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
+
+    resetRevealScreen();
+    buildFlipGrid(players);
+
+    document.getElementById('my-flip-controls').style.display = 'block';
+    document.getElementById('host-correct-area').style.display = 'none';
+
+    showScreen('screen-revealing');
+    showToast('回答公開中です。フリップを開いてください。', 4000);
+
+  } else if (gameState === 'results') {
+    // ラウンド結果画面へ（結果表示中に再入室）
+    const scores = players.map(p => ({ id: p.id, name: p.name, score: p.score }))
+      .sort((a, b) => b.score - a.score);
+    renderScoreList(scores, 'round-score-list');
+    document.getElementById('result-round-badge').textContent = `第${currentRound}ラウンド 結果`;
+
+    // 正解は再入室時に再表示できないため空表示
+    const correctDisplay = document.getElementById('correct-answers-display');
+    if (correctDisplay) correctDisplay.innerHTML = '<p style="color:var(--color-gray);text-align:center;">再入室のため正解は表示できません</p>';
+
+    if (isHost) {
+      document.getElementById('result-host-controls').style.display = 'block';
+      document.getElementById('result-guest-waiting').style.display = 'none';
+    } else {
+      document.getElementById('result-host-controls').style.display = 'none';
+      document.getElementById('result-guest-waiting').style.display = 'block';
+    }
+    showScreen('screen-round-result');
+
+  } else {
+    // その他の状態はロビーへ
+    document.getElementById('display-room-code').textContent = roomId;
+    renderLobbyPlayers(players);
+    document.getElementById('host-controls').style.display = 'none';
+    document.getElementById('guest-waiting').style.display = 'block';
+    showScreen('screen-lobby');
+  }
+});
+
+// --- 再入室エラー ---
+socket.on('rejoin-error', ({ message }) => {
+  showToast('再入室エラー：' + message, 4000);
+});
+
+// --- 他のプレイヤーが再入室 ---
+socket.on('player-rejoined', ({ playerName, players, hostId }) => {
+  if (hostId) hostPlayerId = hostId;
+  totalPlayers = players.length;
+  // ロビー画面にいる場合はプレイヤーリストを更新
+  const activeScreen = document.querySelector('.screen.active');
+  if (activeScreen && activeScreen.id === 'screen-lobby') {
+    renderLobbyPlayers(players);
+  }
+  showToast(`${escapeHTML(playerName)} さんが再入室しました`, 3000);
 });
 
 // --- エラー ---
