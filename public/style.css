@@ -695,6 +695,358 @@ textarea {
 }
 
 /* ===================================
+   変更1: お題ビルダーUI
+=================================== */
+.topic-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--color-white);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+}
+
+.topic-char-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.topic-bracket {
+  font-size: 1.4rem;
+  font-weight: 900;
+  color: var(--color-main);
+  flex-shrink: 0;
+}
+
+/* ひらがな1文字入力欄（小さくて正方形） */
+.topic-char-input {
+  width: 56px !important;
+  min-width: 56px;
+  height: 56px;
+  padding: 8px !important;
+  font-size: 1.5rem !important;
+  font-weight: 900;
+  text-align: center;
+  flex-shrink: 0;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-main);
+}
+
+.topic-char-input:focus {
+  border-color: var(--color-main);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.15);
+}
+
+/* お題ワード入力欄 */
+.topic-word-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: 'M PLUS Rounded 1c', sans-serif;
+  font-size: 1rem;
+  color: var(--color-text);
+  background: var(--color-white);
+  transition: border-color var(--transition);
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.topic-word-input:focus {
+  border-color: var(--color-main);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.15);
+}
+
+/* お題プレビュー */
+.topic-preview {
+  font-size: 0.85rem;
+  color: var(--color-gray);
+  font-weight: 500;
+  padding: 8px 10px;
+  background: var(--color-light-gray);
+  border-radius: var(--radius-sm);
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  transition: all var(--transition);
+}
+
+.topic-preview--active {
+  background: rgba(255, 107, 53, 0.08);
+  color: var(--color-main);
+  font-weight: 700;
+}
+
+/* ===================================
+   変更3: キャンバス手書きUI
+=================================== */
+
+/* キャンバス本体 */
+#answer-canvas {
+  border: 3px solid #333;
+  border-radius: 12px;
+  background: white;
+  touch-action: none;
+  cursor: crosshair;
+  display: block;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 1000px;
+  height: auto;
+}
+
+/* 回答入力・回答公開画面のscreen-innerを幅広に */
+#screen-submitting .screen-inner,
+#screen-revealing .screen-inner {
+  max-width: 820px;
+}
+
+/* フリップカードエリア全体 */
+.flip-card-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 0;
+  width: 100%;
+}
+
+/* ラベル */
+.flip-card-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-gray);
+  text-align: center;
+}
+
+/* ツールバー（消す＋ペンサイズ） */
+.flip-card-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 1000px;
+  gap: 12px;
+}
+
+/* 消すボタン */
+#btn-clear-canvas {
+  flex-shrink: 0;
+  width: auto;
+  min-height: 40px;
+  padding: 8px 18px;
+  font-size: 0.9rem;
+}
+
+/* ペンサイズ選択 */
+.pen-size-selector {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pen-size-btn {
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+  font-family: 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-gray);
+  cursor: pointer;
+  transition: all var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pen-size-btn.active {
+  background: var(--color-main);
+  border-color: var(--color-main);
+  color: var(--color-white);
+}
+
+/* ===================================
+   変更3: 回答アイテム内の画像表示
+=================================== */
+.answer-image {
+  max-width: 100%;
+  border-radius: 8px;
+  display: block;
+  margin-top: 4px;
+}
+
+/* ===================================
+   変更2: フリップカードグリッド（回答公開画面）
+=================================== */
+.flip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin: 16px 0;
+}
+
+.flip-card {
+  width: 160px;
+  height: 120px;
+  perspective: 800px;
+}
+
+.flip-card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.6s;
+  transform-style: preserve-3d;
+}
+
+.flip-card-inner.flipped {
+  transform: rotateY(180deg);
+}
+
+.flip-card-front,
+.flip-card-back {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.flip-card-front {
+  background: linear-gradient(135deg, #FF6B35, #FF8C5A);
+  color: white;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.flip-card-back {
+  background: white;
+  border: 2px solid #ddd;
+  transform: rotateY(180deg);
+  overflow: hidden;
+}
+
+.flip-card-back .answer-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.flip-card-back .answer-text {
+  font-size: 1.1rem;
+  font-weight: bold;
+  text-align: center;
+  word-break: break-all;
+}
+
+.card-player-name {
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.card-status {
+  font-size: 0.7rem;
+  opacity: 0.8;
+  margin-top: 4px;
+}
+
+.flip-card.is-me .flip-card-front {
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+}
+
+.flip-card.correct-flip .flip-card-back {
+  border: 3px solid #FF6B35;
+  box-shadow: 0 0 16px rgba(255,107,53,0.5);
+}
+
+.my-flip-controls {
+  margin: 12px 0;
+}
+
+.host-correct-area {
+  margin-top: 20px;
+  padding: 16px;
+  background: #fff3e0;
+  border-radius: 12px;
+}
+
+.host-correct-area h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.correct-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin: 12px 0;
+}
+
+.correct-candidate-btn {
+  padding: 10px 16px;
+  border: 2px solid #ccc;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-family: 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.correct-candidate-btn.active {
+  border-color: #FF6B35;
+  background: #FF6B35;
+  color: white;
+}
+
+/* ===================================
+   変更2: 正解選択ボタン（ラジオ的）
+=================================== */
+.btn-correct-select {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border: 2px solid var(--color-correct);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-correct);
+  font-family: 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-correct-select:hover {
+  background: rgba(76, 175, 80, 0.1);
+}
+
+/* 選択状態 */
+.btn-correct-select.selected {
+  background: var(--color-correct);
+  color: var(--color-white);
+}
+
+/* ===================================
    ユーティリティ
 =================================== */
 .mt-16 { margin-top: 16px; }

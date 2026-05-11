@@ -20,6 +20,9 @@ let totalAnswers = 0;
 let allAnswers = []; // 公開された回答の配列 {playerName, answer, isCorrect}
 let revealScreenInitialized = false; // 公開画面が初期化済みかどうか
 
+// 変更2: 現在選択されている正解（文字列、ラジオ動作）
+let currentCorrectAnswer = '';
+
 // ======================================
 // 画面切り替え
 // ======================================
@@ -145,38 +148,191 @@ function renderScoreList(scores, containerId) {
 }
 
 // ======================================
-// 回答公開画面の初期化（ホスト・ゲスト共通）
+// フリップ公開画面のリセット
 // ======================================
-function initRevealScreen() {
-  if (revealScreenInitialized) return; // 二重初期化防止
-  revealScreenInitialized = true;
-
-  const list = document.getElementById('revealed-answers-list');
-  if (list) list.innerHTML = '';
+function resetRevealScreen() {
   allAnswers = [];
   revealedCount = 0;
+  currentCorrectAnswer = '';
+  revealScreenInitialized = false;
+  // フリップボタンを初期状態に戻す
+  const flipBtn = document.getElementById('btn-open-my-flip');
+  if (flipBtn) {
+    flipBtn.disabled = false;
+    flipBtn.textContent = 'フリップを開く！';
+  }
+  // グリッドをクリア
+  const grid = document.getElementById('flip-grid');
+  if (grid) grid.innerHTML = '';
+  // 正解エリアを非表示
+  const hostCorrectArea = document.getElementById('host-correct-area');
+  if (hostCorrectArea) hostCorrectArea.style.display = 'none';
+}
 
-  // ラウンドバッジ更新
-  const badge = document.getElementById('revealing-round-badge');
-  if (badge) {
-    badge.textContent = `第${currentRoundNum}ラウンド / 全${totalRoundsNum}ラウンド`;
+// ======================================
+// 変更3: キャンバス手書き実装
+// ======================================
+let canvasCtx = null;     // canvasの描画コンテキスト
+let isDrawing = false;    // 描画中かどうか
+let penSize = 6;          // 現在のペンサイズ（デフォルト：細）
+let lastX = 0;
+let lastY = 0;
+
+// キャンバスの相対座標を取得（タッチ・マウス両対応）
+function getCanvasPos(canvas, e) {
+  const rect = canvas.getBoundingClientRect();
+  // canvasの実際のピクセルサイズとCSSサイズの比率を考慮
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  // PointerEventの場合はclientX/clientYを使用
+  const clientX = e.clientX;
+  const clientY = e.clientY;
+
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+// キャンバスが空（全ピクセル白）かチェック
+function isCanvasEmpty(canvas) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    // RGBがすべて255（白）でない、またはアルファが0でないピクセルを探す
+    if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// キャンバスを初期化（白で塗りつぶす）
+function clearCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+// キャンバス初期化処理
+function initCanvas() {
+  const canvas = document.getElementById('answer-canvas');
+  if (!canvas) return;
+
+  canvasCtx = canvas.getContext('2d');
+
+  // 初期状態：白で塗りつぶす
+  clearCanvas(canvas);
+
+  // 描画設定
+  canvasCtx.lineCap = 'round';
+  canvasCtx.lineJoin = 'round';
+  canvasCtx.strokeStyle = '#222222';
+  canvasCtx.lineWidth = penSize;
+
+  // ペンサイズ切り替えボタン
+  document.querySelectorAll('.pen-size-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.pen-size-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      penSize = parseInt(btn.dataset.size);
+      canvasCtx.lineWidth = penSize;
+    });
+  });
+
+  // 「消す」ボタン
+  const clearBtn = document.getElementById('btn-clear-canvas');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      clearCanvas(canvas);
+    });
   }
 
-  // ホスト用コントロール
-  const hostControls = document.getElementById('host-reveal-controls');
-  const endRoundBtn = document.getElementById('btn-end-round');
-  const revealNextBtn = document.getElementById('btn-reveal-next');
+  // ===== Pointer Events（マウス・タッチ両対応）=====
 
-  if (isHost) {
-    hostControls.style.display = 'flex';
-    endRoundBtn.style.display = 'none';
-    revealNextBtn.style.display = 'block';
-    revealNextBtn.disabled = false;
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    isDrawing = true;
+    const pos = getCanvasPos(canvas, e);
+    lastX = pos.x;
+    lastY = pos.y;
+
+    // 点を描画（クリックのみの場合も点を打つ）
+    canvasCtx.beginPath();
+    canvasCtx.arc(lastX, lastY, canvasCtx.lineWidth / 2, 0, Math.PI * 2);
+    canvasCtx.fillStyle = '#222222';
+    canvasCtx.fill();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    e.preventDefault();
+    if (!isDrawing) return;
+
+    const pos = getCanvasPos(canvas, e);
+
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(lastX, lastY);
+    canvasCtx.lineTo(pos.x, pos.y);
+    canvasCtx.stroke();
+
+    lastX = pos.x;
+    lastY = pos.y;
+  });
+
+  canvas.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    isDrawing = false;
+  });
+
+  canvas.addEventListener('pointerleave', (e) => {
+    e.preventDefault();
+    isDrawing = false;
+  });
+
+  // pointercancel（スクロールなどで描画が中断された場合）
+  canvas.addEventListener('pointercancel', (e) => {
+    isDrawing = false;
+  });
+}
+
+// ======================================
+// 変更1: お題プレビューをリアルタイム更新
+// ======================================
+function updateTopicPreview() {
+  const charInput = document.getElementById('input-topic-char');
+  const wordInput = document.getElementById('input-topic-word');
+  const preview = document.getElementById('topic-preview');
+  if (!charInput || !wordInput || !preview) return;
+
+  const char = charInput.value.trim();
+  const word = wordInput.value.trim();
+
+  if (char && word) {
+    preview.textContent = `プレビュー：「${char}」から始まる${word}`;
+    preview.classList.add('topic-preview--active');
+  } else if (char) {
+    preview.textContent = `プレビュー：「${char}」から始まる...`;
+    preview.classList.remove('topic-preview--active');
+  } else if (word) {
+    preview.textContent = `プレビュー：「？」から始まる${word}`;
+    preview.classList.remove('topic-preview--active');
   } else {
-    hostControls.style.display = 'none';
+    preview.textContent = `プレビュー：「？」から始まる...`;
+    preview.classList.remove('topic-preview--active');
   }
+}
 
-  showScreen('screen-revealing');
+// 変更1: お題文字列をchar（ひらがな1文字）とword（残り）に分解
+function parseTopicString(topic) {
+  // 「あ」から始まる食べ物といえば？ → char='あ', word='食べ物といえば？'
+  // 「あ」で始まる食べ物といえば？   → char='あ', word='で始まる食べ物といえば？'
+  const match = topic.match(/^「([ぁ-ん])」(?:から始まる|で始まる)(.+)$/);
+  if (match) {
+    return { char: match[1], word: match[2] };
+  }
+  return { char: '', word: topic };
 }
 
 // ======================================
@@ -261,36 +417,72 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.emit('start-game', { totalRounds: selectedRounds });
   });
 
-  // ===== お題設定画面 =====
+  // ===== お題設定画面（変更1）=====
+
+  // お題文字（ひらがな1文字）入力イベント
+  document.getElementById('input-topic-char').addEventListener('input', () => {
+    updateTopicPreview();
+  });
+
+  // お題ワード入力イベント
+  document.getElementById('input-topic-word').addEventListener('input', () => {
+    updateTopicPreview();
+  });
 
   // ランダムお題ボタン
   document.getElementById('btn-random-topic').addEventListener('click', () => {
     socket.emit('get-random-topic');
   });
 
-  // お題確定ボタン
+  // お題確定ボタン（変更1: バリデーション付き）
   document.getElementById('btn-set-topic').addEventListener('click', () => {
-    const topic = (document.getElementById('input-topic').value || '').trim();
-    if (!topic) {
-      showToast('お題を入力してください');
-      document.getElementById('input-topic').focus();
+    const charInput = document.getElementById('input-topic-char');
+    const wordInput = document.getElementById('input-topic-word');
+    const char = (charInput.value || '').trim();
+    const word = (wordInput.value || '').trim();
+
+    // ひらがな1文字バリデーション
+    if (!char) {
+      showToast('ひらがな1文字を入力してください');
+      charInput.focus();
       return;
     }
+    if (!/^[ぁ-ん]$/.test(char)) {
+      showToast('「文字」欄にはひらがな1文字を入力してください');
+      charInput.focus();
+      return;
+    }
+    if (!word) {
+      showToast('お題の内容を入力してください');
+      wordInput.focus();
+      return;
+    }
+
+    // 「あ」から始まる食べ物といえば？ の形式で送信
+    const topic = `「${char}」から始まる${word}`;
     socket.emit('set-topic', { topic });
   });
 
-  // ===== 回答入力画面 =====
+  // ===== 回答入力画面（変更3: キャンバス）=====
 
-  // 回答送信ボタン（1か所のみに集約）
+  // キャンバス初期化
+  initCanvas();
+
+  // フリップ！ボタン（回答送信）
   document.getElementById('btn-submit-answer').addEventListener('click', () => {
+    const canvas = document.getElementById('answer-canvas');
     const btn = document.getElementById('btn-submit-answer');
-    const answer = (document.getElementById('input-answer').value || '').trim();
-    if (!answer) {
-      showToast('回答を入力してください');
-      document.getElementById('input-answer').focus();
+
+    // キャンバスが空かチェック
+    if (isCanvasEmpty(canvas)) {
+      showToast('書いてください！');
       return;
     }
-    socket.emit('submit-answer', { answer });
+
+    // base64で圧縮して送信（JPEG、品質0.7）
+    const imageData = canvas.toDataURL('image/jpeg', 0.7);
+    socket.emit('submit-answer', { answer: imageData });
+
     // 送信後UI更新
     document.getElementById('answer-form').style.display = 'none';
     document.getElementById('submitted-message').style.display = 'block';
@@ -299,13 +491,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ===== 回答公開画面 =====
 
-  // 次の回答を公開ボタン
-  document.getElementById('btn-reveal-next').addEventListener('click', () => {
-    const btn = document.getElementById('btn-reveal-next');
-    btn.disabled = true; // 二重クリック防止
-    socket.emit('reveal-next');
-    // サーバーからの応答後に再有効化
-    setTimeout(() => { btn.disabled = false; }, 500);
+  // フリップを開くボタン（自分の回答を公開）
+  document.getElementById('btn-open-my-flip').addEventListener('click', () => {
+    const btn = document.getElementById('btn-open-my-flip');
+    btn.disabled = true;
+    btn.textContent = '公開済み！';
+    socket.emit('open-flip');
   });
 
   // ラウンド終了ボタン
@@ -330,7 +521,8 @@ document.addEventListener('DOMContentLoaded', () => {
     hostPlayerId = null;
     isHost = false;
     selectedRounds = 5;
-    revealScreenInitialized = false;
+    resetRevealScreen();
+    currentCorrectAnswer = '';
     setHashRoomCode('');
     showScreen('screen-home');
   });
@@ -415,10 +607,12 @@ socket.on('host-promoted', ({ message }) => {
     document.getElementById('screen-topic').querySelector('.form-area').style.display = 'flex';
     document.getElementById('topic-guest-waiting').style.display = 'none';
   } else if (screenId === 'screen-revealing') {
-    const hostControls = document.getElementById('host-reveal-controls');
-    hostControls.style.display = 'flex';
-    // 既公開分に正解チェックを追加（公開済み回答をホスト用に再描画）
-    rebuildRevealListForHost();
+    // 全員公開済みの場合、正解選択エリアを表示
+    if (allAnswers.length > 0) {
+      buildCorrectCandidates();
+      document.getElementById('host-correct-area').style.display = 'block';
+      document.getElementById('my-flip-controls').style.display = 'none';
+    }
   } else if (screenId === 'screen-round-result') {
     document.getElementById('result-host-controls').style.display = 'block';
     document.getElementById('result-guest-waiting').style.display = 'none';
@@ -436,7 +630,10 @@ socket.on('game-started', ({ currentRound, totalRounds, isHost: hostFlag }) => {
     document.getElementById('topic-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
     document.getElementById('screen-topic').querySelector('.form-area').style.display = 'flex';
     document.getElementById('topic-guest-waiting').style.display = 'none';
-    document.getElementById('input-topic').value = '';
+    // 変更1: 入力欄をクリア
+    document.getElementById('input-topic-char').value = '';
+    document.getElementById('input-topic-word').value = '';
+    updateTopicPreview();
     showScreen('screen-topic');
   } else {
     // ゲスト：待機画面
@@ -447,9 +644,14 @@ socket.on('game-started', ({ currentRound, totalRounds, isHost: hostFlag }) => {
   }
 });
 
-// --- ランダムお題が届いた ---
+// --- ランダムお題が届いた（変更1: charとwordに分解してフォームへ）---
 socket.on('random-topic', ({ topic }) => {
-  document.getElementById('input-topic').value = topic;
+  const { char, word } = parseTopicString(topic);
+  const charInput = document.getElementById('input-topic-char');
+  const wordInput = document.getElementById('input-topic-word');
+  if (charInput) charInput.value = char;
+  if (wordInput) wordInput.value = word;
+  updateTopicPreview();
 });
 
 // --- お題確定・回答入力開始 ---
@@ -457,8 +659,9 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds }) => {
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
-  // 回答フォームをリセット
-  document.getElementById('input-answer').value = '';
+  // 変更3: キャンバスをクリアしてフォームを表示
+  const canvas = document.getElementById('answer-canvas');
+  if (canvas) clearCanvas(canvas);
   document.getElementById('answer-form').style.display = 'block';
   document.getElementById('submitted-message').style.display = 'none';
 
@@ -479,8 +682,8 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds }) => {
   document.getElementById('total-count').textContent = totalPlayers;
   document.getElementById('answer-progress-bar').style.width = '0%';
 
-  // 公開画面初期化フラグをリセット
-  revealScreenInitialized = false;
+  // 公開画面をリセット
+  resetRevealScreen();
 
   showScreen('screen-submitting');
 });
@@ -494,147 +697,182 @@ socket.on('answer-count', ({ submitted, total }) => {
   totalPlayers = total;
 });
 
-// --- 全員回答完了（ホストへ）---
-socket.on('all-submitted', () => {
-  if (isHost) {
-    showToast('全員が回答しました！公開を開始しましょう');
-    // 公開画面へ初期化して遷移
-    initRevealScreen();
+// --- 全員回答完了（全員へ）---
+socket.on('all-submitted', ({ players }) => {
+  showToast('全員が回答しました！フリップを開きましょう！');
+  // カードグリッドを構築
+  buildFlipGrid(players);
+  // フリップ公開ボタンを表示
+  document.getElementById('my-flip-controls').style.display = 'block';
+  document.getElementById('host-correct-area').style.display = 'none';
+
+  // ラウンドバッジ更新
+  const badge = document.getElementById('revealing-round-badge');
+  if (badge) {
+    badge.textContent = `第${currentRoundNum}ラウンド / 全${totalRoundsNum}ラウンド`;
+  }
+
+  showScreen('screen-revealing');
+});
+
+// --- フリップ公開イベント ---
+socket.on('flip-opened', ({ playerId, playerName, answer, openedCount, total }) => {
+  // 該当カードをフリップ
+  const card = document.getElementById('card-' + playerId);
+  if (card) {
+    // カードの裏面に回答をセット
+    const back = card.querySelector('.flip-card-back');
+    if (answer && answer.startsWith('data:image/')) {
+      back.innerHTML = `<img src="${answer}" class="answer-image" alt="回答">`;
+    } else {
+      back.innerHTML = `<span class="answer-text">${escapeHTML(answer)}</span>`;
+    }
+    // フリップアニメーション
+    setTimeout(() => {
+      card.querySelector('.flip-card-inner').classList.add('flipped');
+    }, 50);
+  }
+
+  // allAnswers に追加（正解選択用）
+  allAnswers.push({ playerId, playerName, answer, isCorrect: false });
+
+  // 全員公開済みかチェック
+  if (openedCount >= total) {
+    // フリップボタンを非表示
+    document.getElementById('my-flip-controls').style.display = 'none';
+    // ホストに正解選択エリアを表示
+    if (isHost) {
+      buildCorrectCandidates();
+      document.getElementById('host-correct-area').style.display = 'block';
+    }
   }
 });
 
-// --- 回答公開イベント ---
-socket.on('answer-revealed', ({ playerName, answer, revealedCount: rc, total }) => {
-  revealedCount = rc;
-  totalAnswers = total;
+// フリップグリッドを構築
+function buildFlipGrid(players) {
+  const grid = document.getElementById('flip-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  allAnswers = []; // 回答リストをリセット
 
-  // ゲストは最初の回答公開で画面遷移（まだ公開画面にいない場合）
-  if (!revealScreenInitialized) {
-    initRevealScreen();
-  }
-
-  allAnswers.push({ playerName, answer, isCorrect: false });
-
-  const list = document.getElementById('revealed-answers-list');
-  if (!list) return;
-
-  const li = buildAnswerListItem(playerName, answer, rc);
-  list.appendChild(li);
-
-  // 全回答公開済みならホストに終了ボタンを表示
-  if (isHost && rc >= total) {
-    document.getElementById('btn-reveal-next').style.display = 'none';
-    document.getElementById('btn-end-round').style.display = 'block';
-  }
-});
-
-// 回答アイテムのDOM要素を生成（ホスト/ゲスト共通）
-function buildAnswerListItem(playerName, answer, index) {
-  const li = document.createElement('li');
-  li.className = 'answer-item';
-  li.dataset.answer = answer;
-
-  if (isHost) {
-    // ホスト：チェックボックス付き
-    const checkboxId = `correct-${escapeHTML(String(index))}`;
-    li.innerHTML = `
-      <div class="answer-item-host">
-        <div class="answer-item-content">
-          <div class="answer-player-name">${escapeHTML(playerName)}</div>
-          <div class="answer-text">${escapeHTML(answer)}</div>
+  players.forEach(player => {
+    const card = document.createElement('div');
+    card.className = 'flip-card' + (player.id === myPlayerId ? ' is-me' : '');
+    card.id = 'card-' + player.id;
+    card.dataset.playerId = player.id;
+    card.innerHTML = `
+      <div class="flip-card-inner">
+        <div class="flip-card-front">
+          <span class="card-player-name">${escapeHTML(player.name)}</span>
+          <span class="card-status">準備中...</span>
         </div>
-        <label class="correct-checkbox-label" for="${checkboxId}">
-          <input type="checkbox" id="${checkboxId}" class="correct-check">
-          正解
-        </label>
+        <div class="flip-card-back"></div>
       </div>
     `;
-    // チェックボックスのイベント
-    const checkbox = li.querySelector('.correct-check');
-    checkbox.addEventListener('change', () => {
-      socket.emit('mark-correct', { answer });
+    grid.appendChild(card);
+  });
+}
+
+// 正解候補ボタンを構築（ホスト用）
+function buildCorrectCandidates() {
+  const container = document.getElementById('correct-candidates');
+  if (!container) return;
+  container.innerHTML = '';
+
+  allAnswers.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'correct-candidate-btn';
+    btn.dataset.answer = item.answer;
+
+    if (item.answer && item.answer.startsWith('data:image/')) {
+      const img = document.createElement('img');
+      img.src = item.answer;
+      img.alt = escapeHTML(item.playerName) + 'の回答';
+      img.style.maxWidth = '80px';
+      img.style.maxHeight = '60px';
+      img.style.objectFit = 'contain';
+      img.style.display = 'block';
+      img.style.margin = '0 auto 4px';
+      btn.appendChild(img);
+      const nameSpan = document.createElement('span');
+      nameSpan.style.display = 'block';
+      nameSpan.style.fontSize = '0.75rem';
+      nameSpan.textContent = item.playerName;
+      btn.appendChild(nameSpan);
+    } else {
+      btn.textContent = item.playerName + ': ' + item.answer;
+    }
+
+    btn.addEventListener('click', () => {
+      socket.emit('mark-correct', { answer: item.answer });
+    });
+
+    container.appendChild(btn);
+  });
+}
+
+// --- 正解マーク更新（ラジオ動作） ---
+socket.on('correct-marked', ({ answer, selected }) => {
+  // 正解候補ボタンの選択状態を更新
+  const candidateBtns = document.querySelectorAll('.correct-candidate-btn');
+  candidateBtns.forEach(btn => {
+    btn.classList.remove('active');
+  });
+  if (selected) {
+    candidateBtns.forEach(btn => {
+      if (btn.dataset.answer === answer) {
+        btn.classList.add('active');
+      }
+    });
+  }
+
+  // フリップカードにも正解ハイライト
+  document.querySelectorAll('.flip-card').forEach(card => {
+    card.classList.remove('correct-flip');
+  });
+  if (selected) {
+    allAnswers.forEach(a => {
+      if (a.answer === answer) {
+        const card = document.getElementById('card-' + a.playerId);
+        if (card) card.classList.add('correct-flip');
+      }
+      a.isCorrect = (a.answer === answer);
     });
   } else {
-    // ゲスト：シンプル表示
-    li.innerHTML = `
-      <div class="answer-player-name">${escapeHTML(playerName)}</div>
-      <div class="answer-text">${escapeHTML(answer)}</div>
-    `;
+    allAnswers.forEach(a => { a.isCorrect = false; });
   }
 
-  return li;
-}
-
-// ホスト昇格時：既存のゲスト用リストをホスト用に再描画
-function rebuildRevealListForHost() {
-  const list = document.getElementById('revealed-answers-list');
-  if (!list) return;
-
-  list.innerHTML = '';
-  allAnswers.forEach((item, index) => {
-    const li = buildAnswerListItem(item.playerName, item.answer, index + 1);
-    if (item.isCorrect) {
-      li.classList.add('correct-answer');
-      const checkbox = li.querySelector('.correct-check');
-      if (checkbox) checkbox.checked = true;
-    }
-    list.appendChild(li);
-  });
-
-  // ボタン状態を更新
-  const revealNextBtn = document.getElementById('btn-reveal-next');
-  const endRoundBtn = document.getElementById('btn-end-round');
-  if (revealedCount >= totalAnswers && totalAnswers > 0) {
-    revealNextBtn.style.display = 'none';
-    endRoundBtn.style.display = 'block';
-  } else {
-    revealNextBtn.style.display = 'block';
-    endRoundBtn.style.display = 'none';
-  }
-}
-
-// --- 正解マーク更新 ---
-socket.on('correct-marked', ({ answer, marked }) => {
-  // 該当する回答アイテムにクラスを付与/削除
-  const items = document.querySelectorAll('#revealed-answers-list .answer-item');
-  items.forEach(item => {
-    if (item.dataset.answer === answer) {
-      if (marked) {
-        item.classList.add('correct-answer');
-      } else {
-        item.classList.remove('correct-answer');
-      }
-      // ホストのチェックボックスも同期
-      const checkbox = item.querySelector('.correct-check');
-      if (checkbox) checkbox.checked = marked;
-    }
-  });
-
-  // allAnswers内の状態も更新
-  allAnswers.forEach(a => {
-    if (a.answer === answer) a.isCorrect = marked;
-  });
+  // クライアント側の正解状態を更新
+  currentCorrectAnswer = selected ? answer : '';
 });
 
-// --- ラウンド終了 ---
-socket.on('round-ended', ({ scores, correctAnswers, currentRound, totalRounds }) => {
-  // 正解回答表示
+// --- ラウンド終了（変更2: correctAnswerは文字列）---
+socket.on('round-ended', ({ scores, correctAnswer, currentRound, totalRounds }) => {
+  // 変更2: 正解回答表示（文字列1つ）
   const correctDisplay = document.getElementById('correct-answers-display');
   correctDisplay.innerHTML = '';
 
-  if (correctAnswers.length === 0) {
+  if (!correctAnswer) {
     const p = document.createElement('p');
     p.textContent = '今回は正解なし';
     p.style.color = 'var(--color-gray)';
     p.style.textAlign = 'center';
     correctDisplay.appendChild(p);
   } else {
-    correctAnswers.forEach(ans => {
-      const badge = document.createElement('div');
-      badge.className = 'correct-answer-badge';
-      badge.textContent = ans;
-      correctDisplay.appendChild(badge);
-    });
+    // 変更3: 正解が画像データの場合は<img>で表示
+    const isImage = typeof correctAnswer === 'string' && correctAnswer.startsWith('data:image/');
+    const badge = document.createElement('div');
+    badge.className = 'correct-answer-badge';
+    if (isImage) {
+      const img = document.createElement('img');
+      img.src = correctAnswer;
+      img.alt = '正解の回答';
+      img.className = 'answer-image';
+      badge.appendChild(img);
+    } else {
+      badge.textContent = correctAnswer;
+    }
+    correctDisplay.appendChild(badge);
   }
 
   // スコア表示
@@ -652,8 +890,8 @@ socket.on('round-ended', ({ scores, correctAnswers, currentRound, totalRounds })
     document.getElementById('result-guest-waiting').style.display = 'block';
   }
 
-  // 公開画面の初期化フラグをリセット（次ラウンドに備える）
-  revealScreenInitialized = false;
+  // 公開画面をリセット（次ラウンドに備える）
+  resetRevealScreen();
 
   showScreen('screen-round-result');
 });
@@ -664,14 +902,18 @@ socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
-  // 公開画面初期化フラグをリセット
-  revealScreenInitialized = false;
+  // 公開画面をリセット
+  resetRevealScreen();
+  currentCorrectAnswer = '';
 
   if (isHost) {
     document.getElementById('topic-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
     document.getElementById('screen-topic').querySelector('.form-area').style.display = 'flex';
     document.getElementById('topic-guest-waiting').style.display = 'none';
-    document.getElementById('input-topic').value = '';
+    // 変更1: 入力欄をクリア
+    document.getElementById('input-topic-char').value = '';
+    document.getElementById('input-topic-word').value = '';
+    updateTopicPreview();
     showScreen('screen-topic');
   } else {
     document.getElementById('topic-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
@@ -680,7 +922,9 @@ socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }
     showScreen('screen-topic');
   }
 
-  // 送信ボタンを再有効化
+  // 変更3: キャンバスをリセット＆送信ボタンを再有効化
+  const canvas = document.getElementById('answer-canvas');
+  if (canvas) clearCanvas(canvas);
   const submitBtn = document.getElementById('btn-submit-answer');
   if (submitBtn) submitBtn.disabled = false;
 });

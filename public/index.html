@@ -73,14 +73,21 @@
   </div>
 
   <!-- お題設定画面（ホスト用） -->
+  <!-- 変更1: テキストエリアからお題ビルダーUIへ変更 -->
   <div id="screen-topic" class="screen">
     <div class="screen-inner">
       <div class="round-badge" id="topic-round-badge">第1ラウンド</div>
       <h2 class="screen-title">お題を決めよう</h2>
       <div class="form-area">
-        <div class="input-group">
-          <label for="input-topic">お題</label>
-          <textarea id="input-topic" placeholder="例：「あ」から始まる食べ物といえば？" maxlength="100" rows="3"></textarea>
+        <!-- お題入力フォーム（ひらがな1文字＋ワード形式） -->
+        <div class="topic-builder">
+          <div class="topic-char-row">
+            <span class="topic-bracket">「</span>
+            <input type="text" id="input-topic-char" maxlength="1" placeholder="あ" class="topic-char-input" autocomplete="off">
+            <span class="topic-bracket">」から始まる</span>
+          </div>
+          <input type="text" id="input-topic-word" placeholder="食べ物といえば？" maxlength="30" class="topic-word-input" autocomplete="off">
+          <div class="topic-preview" id="topic-preview">プレビュー：「？」から始まる...</div>
         </div>
         <button class="btn btn-ghost btn-large" id="btn-random-topic">
           🎲 ランダムお題
@@ -99,16 +106,26 @@
   </div>
 
   <!-- 回答入力画面 -->
+  <!-- 変更3: テキストエリアからキャンバス手書きUIへ変更 -->
   <div id="screen-submitting" class="screen">
     <div class="screen-inner">
       <div class="round-badge" id="submitting-round-badge">第1ラウンド</div>
       <div class="topic-display" id="submitting-topic">お題</div>
       <div class="answer-form" id="answer-form">
-        <div class="input-group">
-          <label for="input-answer">あなたの答えは？</label>
-          <textarea id="input-answer" placeholder="回答を入力してください" maxlength="100" rows="3"></textarea>
+        <!-- フリップカード手書き入力UI -->
+        <div class="flip-card-area">
+          <div class="flip-card-label">ここに答えを書いてね</div>
+          <canvas id="answer-canvas" width="1000" height="700"></canvas>
+          <div class="flip-card-tools">
+            <button class="btn btn-ghost" id="btn-clear-canvas">消す</button>
+            <div class="pen-size-selector">
+              <button class="pen-size-btn active" data-size="6">細</button>
+              <button class="pen-size-btn" data-size="12">中</button>
+              <button class="pen-size-btn" data-size="20">太</button>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-large" id="btn-submit-answer">フリップ！</button>
         </div>
-        <button class="btn btn-primary btn-large" id="btn-submit-answer">送信する</button>
       </div>
       <div class="submitted-message" id="submitted-message" style="display:none;">
         <div class="check-icon">✓</div>
@@ -128,10 +145,17 @@
     <div class="screen-inner">
       <div class="round-badge" id="revealing-round-badge">第1ラウンド</div>
       <div class="topic-display" id="revealing-topic">お題</div>
-      <ul class="answer-list" id="revealed-answers-list"></ul>
-      <div class="host-reveal-controls" id="host-reveal-controls" style="display:none;">
-        <button class="btn btn-secondary btn-large" id="btn-reveal-next">次の回答を公開</button>
-        <button class="btn btn-primary btn-large" id="btn-end-round" style="display:none;">このラウンドを終了</button>
+      <!-- プレイヤーカードグリッド -->
+      <div class="flip-grid" id="flip-grid"></div>
+      <!-- 自分のフリップ公開ボタン（未公開なら表示） -->
+      <div class="my-flip-controls" id="my-flip-controls" style="display:none;">
+        <button class="btn btn-primary btn-large" id="btn-open-my-flip">フリップを開く！</button>
+      </div>
+      <!-- ホスト用：正解選択エリア（全員公開後に表示） -->
+      <div class="host-correct-area" id="host-correct-area" style="display:none;">
+        <h3>正解の回答を選んでください</h3>
+        <div class="correct-candidates" id="correct-candidates"></div>
+        <button class="btn btn-primary btn-large" id="btn-end-round">ラウンドを終了する</button>
       </div>
     </div>
   </div>
