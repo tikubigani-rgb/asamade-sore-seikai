@@ -257,7 +257,7 @@ io.on('connection', (socket) => {
       topic: '',
       answers: new Map(),
       revealedAnswers: [],
-      correctAnswer: '', // 変更2: 文字列1つに変更（配列→文字列）
+      correctAnswers: new Set(), // 複数正解対応
       openedFlips: new Set() // 変更2: フリップ公開済みplayerIdのSet
     };
 
@@ -385,7 +385,7 @@ io.on('connection', (socket) => {
     room.topic = trimmedTopic.substring(0, 200); // base64対応のため上限を拡張
     room.answers = new Map();
     room.revealedAnswers = [];
-    room.correctAnswer = ''; // 変更2: 文字列にリセット
+    room.correctAnswers = new Set();
     room.openedFlips = new Set(); // フリップ公開済みをリセット
     room.gameState = 'submitting';
 
@@ -464,7 +464,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // --- 正解マーク（ホストのみ、ラジオ的トグル） ---
+  // --- 正解マーク（ホストのみ、複数選択トグル） ---
   socket.on('mark-correct', ({ answer }) => {
     const room = rooms.get(socket.roomId);
     if (!room) return;
@@ -474,19 +474,17 @@ io.on('connection', (socket) => {
       return;
     }
 
-    let selected;
-    if (room.correctAnswer === answer) {
-      // 同じ回答をクリック→選択解除（トグル）
-      room.correctAnswer = '';
-      selected = false;
+    if (room.correctAnswers.has(answer)) {
+      room.correctAnswers.delete(answer);
     } else {
-      // 別の回答をクリック→新しく選択
-      room.correctAnswer = answer;
-      selected = true;
+      room.correctAnswers.add(answer);
     }
 
-    // 変更2: selectedとanswerを送信（ラジオ動作用）
-    io.to(socket.roomId).emit('correct-marked', { answer, selected });
+    io.to(socket.roomId).emit('correct-marked', {
+      answer,
+      selected: room.correctAnswers.has(answer),
+      selectedAnswers: Array.from(room.correctAnswers)
+    });
   });
 
   // --- ラウンド終了（ホストのみ） ---
@@ -499,10 +497,9 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // 変更2: 正解1つに一致するプレイヤーにポイント付与
     room.players.forEach(player => {
       const playerAnswer = room.answers.get(player.id);
-      if (room.correctAnswer && playerAnswer === room.correctAnswer) {
+      if (room.correctAnswers.size > 0 && playerAnswer && room.correctAnswers.has(playerAnswer)) {
         player.score += 1;
       }
     });
@@ -515,10 +512,9 @@ io.on('connection', (socket) => {
 
     room.gameState = 'results';
 
-    // 変更2: correctAnswerを文字列として送信
     io.to(socket.roomId).emit('round-ended', {
       scores,
-      correctAnswer: room.correctAnswer,
+      correctAnswers: Array.from(room.correctAnswers),
       currentRound: room.currentRound,
       totalRounds: room.totalRounds
     });
@@ -553,7 +549,7 @@ io.on('connection', (socket) => {
       room.gameState = 'topic-setting';
       room.answers = new Map();
       room.revealedAnswers = [];
-      room.correctAnswer = ''; // 変更2: 文字列でリセット
+      room.correctAnswers = new Set();
       room.openedFlips = new Set(); // フリップ公開済みをリセット
       room.topic = '';
 

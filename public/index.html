@@ -117,14 +117,16 @@
           <div class="flip-card-label">ここに答えを書いてね</div>
           <canvas id="answer-canvas" width="1000" height="700"></canvas>
           <div class="flip-card-tools">
-            <button class="btn btn-ghost" id="btn-clear-canvas">消す</button>
+            <button class="btn btn-ghost" id="btn-undo-canvas">取り消し</button>
+            <button class="btn btn-ghost" id="btn-redo-canvas">やり直し</button>
+            <button class="btn btn-ghost" id="btn-clear-canvas">全消去</button>
             <div class="pen-size-selector">
               <button class="pen-size-btn active" data-size="6">細</button>
               <button class="pen-size-btn" data-size="12">中</button>
               <button class="pen-size-btn" data-size="20">太</button>
             </div>
           </div>
-          <button class="btn btn-primary btn-large" id="btn-submit-answer">フリップ！</button>
+          <button class="btn btn-primary btn-large" id="btn-submit-answer">決定</button>
         </div>
       </div>
       <div class="submitted-message" id="submitted-message" style="display:none;">

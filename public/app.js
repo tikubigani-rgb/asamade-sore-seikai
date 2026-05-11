@@ -21,7 +21,10 @@ let allAnswers = []; // 公開された回答の配列 {playerName, answer, isCo
 let revealScreenInitialized = false; // 公開画面が初期化済みかどうか
 
 // 変更2: 現在選択されている正解（文字列、ラジオ動作）
-let currentCorrectAnswer = '';
+let currentCorrectAnswers = new Set();
+
+let undoStack = [];
+let redoStack = [];
 
 // ======================================
 // 画面切り替え
@@ -153,7 +156,7 @@ function renderScoreList(scores, containerId) {
 function resetRevealScreen() {
   allAnswers = [];
   revealedCount = 0;
-  currentCorrectAnswer = '';
+  currentCorrectAnswers = new Set();
   revealScreenInitialized = false;
   // フリップボタンを初期状態に戻す
   const flipBtn = document.getElementById('btn-open-my-flip');
@@ -216,6 +219,40 @@ function clearCanvas(canvas) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
+// undo状態を保存
+function saveUndoState(canvas) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  undoStack.push(imageData);
+  if (undoStack.length > 30) {
+    undoStack.shift();
+  }
+  redoStack = [];
+}
+
+// undo処理
+function undoCanvas(canvas) {
+  if (undoStack.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const currentState = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  redoStack.push(currentState);
+  const prevState = undoStack.pop();
+  ctx.putImageData(prevState, 0, 0);
+}
+
+// redo処理
+function redoCanvas(canvas) {
+  if (redoStack.length === 0) return;
+  const ctx = canvas.getContext('2d');
+  const currentState = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  undoStack.push(currentState);
+  if (undoStack.length > 30) {
+    undoStack.shift();
+  }
+  const nextState = redoStack.pop();
+  ctx.putImageData(nextState, 0, 0);
+}
+
 // キャンバス初期化処理
 function initCanvas() {
   const canvas = document.getElementById('answer-canvas');
@@ -242,10 +279,27 @@ function initCanvas() {
     });
   });
 
-  // 「消す」ボタン
+  // 「取り消し」ボタン
+  const undoBtn = document.getElementById('btn-undo-canvas');
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => {
+      undoCanvas(canvas);
+    });
+  }
+
+  // 「やり直し」ボタン
+  const redoBtn = document.getElementById('btn-redo-canvas');
+  if (redoBtn) {
+    redoBtn.addEventListener('click', () => {
+      redoCanvas(canvas);
+    });
+  }
+
+  // 「全消去」ボタン
   const clearBtn = document.getElementById('btn-clear-canvas');
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
+      saveUndoState(canvas);
       clearCanvas(canvas);
     });
   }
@@ -254,6 +308,7 @@ function initCanvas() {
 
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    saveUndoState(canvas);
     isDrawing = true;
     const pos = getCanvasPos(canvas, e);
     lastX = pos.x;
@@ -522,7 +577,7 @@ document.addEventListener('DOMContentLoaded', () => {
     isHost = false;
     selectedRounds = 5;
     resetRevealScreen();
-    currentCorrectAnswer = '';
+    currentCorrectAnswers = new Set();
     setHashRoomCode('');
     showScreen('screen-home');
   });
@@ -661,7 +716,11 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds }) => {
 
   // 変更3: キャンバスをクリアしてフォームを表示
   const canvas = document.getElementById('answer-canvas');
-  if (canvas) clearCanvas(canvas);
+  if (canvas) {
+    clearCanvas(canvas);
+    undoStack = [];
+    redoStack = [];
+  }
   document.getElementById('answer-form').style.display = 'block';
   document.getElementById('submitted-message').style.display = 'none';
 
@@ -811,77 +870,64 @@ function buildCorrectCandidates() {
   });
 }
 
-// --- 正解マーク更新（ラジオ動作） ---
-socket.on('correct-marked', ({ answer, selected }) => {
-  // 正解候補ボタンの選択状態を更新
+// --- 正解マーク更新（複数選択） ---
+socket.on('correct-marked', ({ answer, selected, selectedAnswers }) => {
+  currentCorrectAnswers = new Set(selectedAnswers || []);
+
   const candidateBtns = document.querySelectorAll('.correct-candidate-btn');
   candidateBtns.forEach(btn => {
-    btn.classList.remove('active');
+    if (currentCorrectAnswers.has(btn.dataset.answer)) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
   });
-  if (selected) {
-    candidateBtns.forEach(btn => {
-      if (btn.dataset.answer === answer) {
-        btn.classList.add('active');
-      }
-    });
-  }
 
-  // フリップカードにも正解ハイライト
   document.querySelectorAll('.flip-card').forEach(card => {
     card.classList.remove('correct-flip');
   });
-  if (selected) {
-    allAnswers.forEach(a => {
-      if (a.answer === answer) {
-        const card = document.getElementById('card-' + a.playerId);
-        if (card) card.classList.add('correct-flip');
-      }
-      a.isCorrect = (a.answer === answer);
-    });
-  } else {
-    allAnswers.forEach(a => { a.isCorrect = false; });
-  }
-
-  // クライアント側の正解状態を更新
-  currentCorrectAnswer = selected ? answer : '';
+  allAnswers.forEach(a => {
+    a.isCorrect = currentCorrectAnswers.has(a.answer);
+    if (a.isCorrect) {
+      const card = document.getElementById('card-' + a.playerId);
+      if (card) card.classList.add('correct-flip');
+    }
+  });
 });
 
-// --- ラウンド終了（変更2: correctAnswerは文字列）---
-socket.on('round-ended', ({ scores, correctAnswer, currentRound, totalRounds }) => {
-  // 変更2: 正解回答表示（文字列1つ）
+// --- ラウンド終了（correctAnswers配列対応）---
+socket.on('round-ended', ({ scores, correctAnswers, currentRound, totalRounds }) => {
   const correctDisplay = document.getElementById('correct-answers-display');
   correctDisplay.innerHTML = '';
 
-  if (!correctAnswer) {
+  if (!correctAnswers || correctAnswers.length === 0) {
     const p = document.createElement('p');
     p.textContent = '今回は正解なし';
     p.style.color = 'var(--color-gray)';
     p.style.textAlign = 'center';
     correctDisplay.appendChild(p);
   } else {
-    // 変更3: 正解が画像データの場合は<img>で表示
-    const isImage = typeof correctAnswer === 'string' && correctAnswer.startsWith('data:image/');
-    const badge = document.createElement('div');
-    badge.className = 'correct-answer-badge';
-    if (isImage) {
-      const img = document.createElement('img');
-      img.src = correctAnswer;
-      img.alt = '正解の回答';
-      img.className = 'answer-image';
-      badge.appendChild(img);
-    } else {
-      badge.textContent = correctAnswer;
-    }
-    correctDisplay.appendChild(badge);
+    correctAnswers.forEach(correctAnswer => {
+      const isImage = typeof correctAnswer === 'string' && correctAnswer.startsWith('data:image/');
+      const badge = document.createElement('div');
+      badge.className = 'correct-answer-badge';
+      if (isImage) {
+        const img = document.createElement('img');
+        img.src = correctAnswer;
+        img.alt = '正解の回答';
+        img.className = 'answer-image';
+        badge.appendChild(img);
+      } else {
+        badge.textContent = correctAnswer;
+      }
+      correctDisplay.appendChild(badge);
+    });
   }
 
-  // スコア表示
   renderScoreList(scores, 'round-score-list');
 
-  // ラウンドバッジ
   document.getElementById('result-round-badge').textContent = `第${currentRound}ラウンド 結果`;
 
-  // ホスト/ゲストで表示切り替え
   if (isHost) {
     document.getElementById('result-host-controls').style.display = 'block';
     document.getElementById('result-guest-waiting').style.display = 'none';
@@ -890,7 +936,6 @@ socket.on('round-ended', ({ scores, correctAnswer, currentRound, totalRounds }) 
     document.getElementById('result-guest-waiting').style.display = 'block';
   }
 
-  // 公開画面をリセット（次ラウンドに備える）
   resetRevealScreen();
 
   showScreen('screen-round-result');
@@ -904,7 +949,7 @@ socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }
 
   // 公開画面をリセット
   resetRevealScreen();
-  currentCorrectAnswer = '';
+  currentCorrectAnswers = new Set();
 
   if (isHost) {
     document.getElementById('topic-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
@@ -924,7 +969,11 @@ socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }
 
   // 変更3: キャンバスをリセット＆送信ボタンを再有効化
   const canvas = document.getElementById('answer-canvas');
-  if (canvas) clearCanvas(canvas);
+  if (canvas) {
+    clearCanvas(canvas);
+    undoStack = [];
+    redoStack = [];
+  }
   const submitBtn = document.getElementById('btn-submit-answer');
   if (submitBtn) submitBtn.disabled = false;
 });
