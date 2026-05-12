@@ -677,6 +677,22 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
+    // revealing フェーズで未公開の場合、自動でフリップ公開して進行を継続
+    if (room.gameState === 'revealing') {
+      const answer = room.answers.get(socket.id);
+      const player = room.players.find(p => p.id === socket.id);
+      if (answer && player && !room.openedFlips.has(socket.id)) {
+        room.openedFlips.add(socket.id);
+        io.to(roomId).emit('flip-opened', {
+          playerId: socket.id,
+          playerName: player.name,
+          answer: answer,
+          openedCount: room.openedFlips.size,
+          total: room.players.length
+        });
+      }
+    }
+
     // プレイヤーをリストから削除
     room.players = room.players.filter(p => p.id !== socket.id);
 

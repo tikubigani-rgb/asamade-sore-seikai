@@ -1122,11 +1122,17 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     resetRevealScreen();
     buildFlipGrid(players);
 
-    document.getElementById('my-flip-controls').style.display = 'block';
+    // hasSubmitted=false は自動公開済み（disconnect時にauto-open済み）
+    if (hasSubmitted) {
+      document.getElementById('my-flip-controls').style.display = 'block';
+      showToast('回答公開中です。フリップを開いてください。', 4000);
+    } else {
+      document.getElementById('my-flip-controls').style.display = 'none';
+      showToast('回答公開中です。', 3000);
+    }
     document.getElementById('host-correct-area').style.display = 'none';
 
     showScreen('screen-revealing');
-    showToast('回答公開中です。フリップを開いてください。', 4000);
 
   } else if (gameState === 'results') {
     // ラウンド結果画面へ（結果表示中に再入室）
