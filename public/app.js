@@ -825,6 +825,9 @@ socket.on('game-started', ({ currentRound, totalRounds, isHost: hostFlag }) => {
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
+  // タイマーをリセット（ホスト・参加者問わず）
+  resetSubmitTimer();
+
   if (isHost) {
     // ホスト：お題設定画面へ
     document.getElementById('topic-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
@@ -891,12 +894,12 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt:
   // 公開画面をリセット
   resetRevealScreen();
 
-  // 描画タイマー開始
+  showScreen('screen-submitting');
+
+  // 描画タイマー開始（showScreen後に呼び出してホスト・参加者問わず確実に表示）
   if (startedAt) {
     startSubmitTimer(startedAt);
   }
-
-  showScreen('screen-submitting');
 });
 
 // --- 回答数更新 ---
