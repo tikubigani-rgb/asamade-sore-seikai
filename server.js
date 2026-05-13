@@ -234,6 +234,11 @@ function createUniqueRoomId() {
   return roomId;
 }
 
+// 切断中プレイヤーのセッションを一時保持するMap
+// key: playerName + ':' + roomId, value: { timer, playerId, roomId, playerName }
+const disconnectSessions = new Map();
+const DISCONNECT_TIMEOUT_MS = 30000; // 30秒間セッション保持
+
 // Socket.io接続処理
 io.on('connection', (socket) => {
   console.log(`プレイヤー接続: ${socket.id}`);
@@ -396,12 +401,52 @@ io.on('connection', (socket) => {
     room.correctAnswers = new Set();
     room.openedFlips = new Set(); // フリップ公開済みをリセット
     room.gameState = 'submitting';
+    room.submittingStartedAt = Date.now(); // 5分タイマー開始時刻を記録
+
+    // 以前の回答タイムアウトをクリア
+    if (room.submitTimeout) {
+      clearTimeout(room.submitTimeout);
+      room.submitTimeout = null;
+    }
+    if (room.submitTimeout5min) {
+      clearTimeout(room.submitTimeout5min);
+      room.submitTimeout5min = null;
+    }
+
+    // 60秒後に強制的にrevealingフェーズへ（デッドロック防止）
+    room.submitTimeout = setTimeout(() => {
+      const currentRoom = rooms.get(socket.roomId);
+      if (!currentRoom || currentRoom.gameState !== 'submitting') return;
+
+      console.log(`回答タイムアウト（60秒）→ revealing へ強制移行: ルーム ${socket.roomId}`);
+      currentRoom.gameState = 'revealing';
+      currentRoom.openedFlips = new Set();
+      const activePlayers = currentRoom.players.filter(p => !p.disconnected);
+      io.to(socket.roomId).emit('all-submitted', {
+        players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+      });
+    }, 60000);
+
+    // 5分（300秒）後に強制的にrevealingフェーズへ（描画タイマー）
+    room.submitTimeout5min = setTimeout(() => {
+      const currentRoom = rooms.get(socket.roomId);
+      if (!currentRoom || currentRoom.gameState !== 'submitting') return;
+
+      console.log(`回答タイムアウト（5分）→ revealing へ強制移行: ルーム ${socket.roomId}`);
+      currentRoom.gameState = 'revealing';
+      currentRoom.openedFlips = new Set();
+      const activePlayers = currentRoom.players.filter(p => !p.disconnected);
+      io.to(socket.roomId).emit('all-submitted', {
+        players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+      });
+    }, 300000);
 
     // 全員に回答入力画面へ
     io.to(socket.roomId).emit('topic-set', {
       topic: room.topic,
       currentRound: room.currentRound,
-      totalRounds: room.totalRounds
+      totalRounds: room.totalRounds,
+      submittingStartedAt: room.submittingStartedAt
     });
 
     console.log(`お題設定: 「${room.topic}」 ルーム ${socket.roomId}`);
@@ -432,17 +477,28 @@ io.on('connection', (socket) => {
 
     const submitted = room.answers.size;
     const total = room.players.length;
+    const activePlayers = room.players.filter(p => !p.disconnected);
+    const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
 
     // 全員に回答数を通知
     io.to(socket.roomId).emit('answer-count', { submitted, total });
 
-    // 全員回答完了
-    if (submitted >= total) {
+    // アクティブプレイヤー全員回答完了（または全員回答完了）
+    if (submitted >= total || (activePlayers.length > 0 && activeSubmitted >= activePlayers.length)) {
+      // タイムアウトをクリア
+      if (room.submitTimeout) {
+        clearTimeout(room.submitTimeout);
+        room.submitTimeout = null;
+      }
+      if (room.submitTimeout5min) {
+        clearTimeout(room.submitTimeout5min);
+        room.submitTimeout5min = null;
+      }
       room.gameState = 'revealing';
       room.openedFlips = new Set(); // フリップ公開済みをリセット
-      // 全員に通知（プレイヤー情報付き）
+      // 全員に通知（アクティブプレイヤー情報付き）
       io.to(socket.roomId).emit('all-submitted', {
-        players: room.players.map(p => ({ id: p.id, name: p.name }))
+        players: activePlayers.map(p => ({ id: p.id, name: p.name }))
       });
     }
 
@@ -560,6 +616,15 @@ io.on('connection', (socket) => {
       room.correctAnswers = new Set();
       room.openedFlips = new Set(); // フリップ公開済みをリセット
       room.topic = '';
+      room.submittingStartedAt = null;
+      if (room.submitTimeout) {
+        clearTimeout(room.submitTimeout);
+        room.submitTimeout = null;
+      }
+      if (room.submitTimeout5min) {
+        clearTimeout(room.submitTimeout5min);
+        room.submitTimeout5min = null;
+      }
 
       // ホストにお題設定画面へ
       socket.emit('next-round-started', {
@@ -604,6 +669,14 @@ io.on('connection', (socket) => {
     let hasSubmitted = false;
 
     if (existingPlayer) {
+      // 切断セッションのタイムアウトをキャンセル
+      const sessionKey = trimmedName + ':' + upperRoomId;
+      if (disconnectSessions.has(sessionKey)) {
+        clearTimeout(disconnectSessions.get(sessionKey).timer);
+        disconnectSessions.delete(sessionKey);
+        console.log(`切断セッションキャンセル（再入室）: ${trimmedName}`);
+      }
+
       // ID更新前に回答済みかチェック（古いIDで保存されているため）
       hasSubmitted = room.answers.has(existingPlayer.id);
       // 回答がある場合は新しいIDに紐付け直す
@@ -622,8 +695,9 @@ io.on('connection', (socket) => {
         wasHost = true;
         room.hostId = socket.id;
       }
-      // 既存プレイヤーのソケットIDを更新（再接続扱い）
+      // 既存プレイヤーのソケットIDを更新（再接続扱い）＆切断フラグ解除
       existingPlayer.id = socket.id;
+      existingPlayer.disconnected = false;
     } else {
       // 新規として追加（途中参加）
       room.players.push({
@@ -653,7 +727,8 @@ io.on('connection', (socket) => {
       hasSubmitted: hasSubmitted,
       submittedCount: room.answers.size,
       totalCount: room.players.length,
-      openedFlipCount: room.openedFlips ? room.openedFlips.size : 0
+      openedFlipCount: room.openedFlips ? room.openedFlips.size : 0,
+      submittingStartedAt: room.submittingStartedAt || null
     };
 
     socket.emit('rejoin-success', gameStateInfo);
@@ -677,63 +752,130 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
-    // revealing フェーズで未公開の場合、自動でフリップ公開して進行を継続
-    if (room.gameState === 'revealing') {
-      const answer = room.answers.get(socket.id);
-      const player = room.players.find(p => p.id === socket.id);
-      if (answer && player && !room.openedFlips.has(socket.id)) {
-        room.openedFlips.add(socket.id);
-        io.to(roomId).emit('flip-opened', {
-          playerId: socket.id,
-          playerName: player.name,
-          answer: answer,
-          openedCount: room.openedFlips.size,
-          total: room.players.length
-        });
-      }
+    // 切断プレイヤーの名前を取得
+    const disconnectedPlayer = room.players.find(p => p.id === socket.id);
+    if (!disconnectedPlayer) return;
+
+    const sessionKey = disconnectedPlayer.name + ':' + roomId;
+
+    // 既存のタイムアウトがあればクリア（二重切断対策）
+    if (disconnectSessions.has(sessionKey)) {
+      clearTimeout(disconnectSessions.get(sessionKey).timer);
     }
 
-    // プレイヤーをリストから削除
-    room.players = room.players.filter(p => p.id !== socket.id);
+    // プレイヤーを「切断中」フラグにする（リストからは削除しない）
+    disconnectedPlayer.disconnected = true;
 
-    // 回答・フリップ公開済みも削除
-    room.answers.delete(socket.id);
-    if (room.openedFlips) room.openedFlips.delete(socket.id);
-
-    if (room.players.length === 0) {
-      // 全員いなくなったらルーム削除
-      rooms.delete(roomId);
-      console.log(`ルーム削除（全員退出）: ${roomId}`);
-      return;
-    }
-
-    // ホストが切断した場合、次のプレイヤーをホストに昇格
-    if (room.hostId === socket.id) {
-      room.hostId = room.players[0].id;
-      io.to(room.hostId).emit('host-promoted', {
-        message: 'あなたがホストになりました'
-      });
-      console.log(`ホスト昇格: ${room.players[0].name} ルーム ${roomId}`);
-    }
-
-    // 残りのプレイヤーに通知
-    io.to(roomId).emit('player-left', {
-      players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score }))
+    // 他プレイヤーに切断を通知（ゲームは継続）
+    io.to(roomId).emit('player-disconnected', {
+      playerName: disconnectedPlayer.name,
+      players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score, disconnected: p.disconnected || false }))
     });
 
-    // ゲーム中に全員回答済みになった場合の再チェック
-    if (room.gameState === 'submitting' && room.players.length > 0) {
-      const submitted = room.answers.size;
+    // submitting フェーズで切断プレイヤーをスキップ（デッドロック防止）
+    if (room.gameState === 'submitting') {
+      const activePlayers = room.players.filter(p => !p.disconnected);
+      const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
       const total = room.players.length;
+      const submitted = room.answers.size;
+
       io.to(roomId).emit('answer-count', { submitted, total });
-      if (submitted >= total) {
+
+      // アクティブプレイヤー全員が回答済みなら次のフェーズへ
+      if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
         room.gameState = 'revealing';
         room.openedFlips = new Set();
         io.to(roomId).emit('all-submitted', {
-          players: room.players.map(p => ({ id: p.id, name: p.name }))
+          players: room.players.filter(p => !p.disconnected).map(p => ({ id: p.id, name: p.name }))
         });
       }
     }
+
+    // revealing フェーズで未公開の場合、自動でフリップ公開して進行を継続
+    if (room.gameState === 'revealing') {
+      const answer = room.answers.get(socket.id);
+      if (answer && !room.openedFlips.has(socket.id)) {
+        room.openedFlips.add(socket.id);
+        const activePlayers = room.players.filter(p => !p.disconnected);
+        io.to(roomId).emit('flip-opened', {
+          playerId: socket.id,
+          playerName: disconnectedPlayer.name,
+          answer: answer,
+          openedCount: room.openedFlips.size,
+          total: activePlayers.length
+        });
+      }
+    }
+
+    // 30秒後にセッションを本当に削除
+    const timer = setTimeout(() => {
+      disconnectSessions.delete(sessionKey);
+
+      const currentRoom = rooms.get(roomId);
+      if (!currentRoom) return;
+
+      // まだ切断中のままなら本当に退出処理
+      const stillDisconnected = currentRoom.players.find(
+        p => p.name === disconnectedPlayer.name && p.disconnected
+      );
+      if (!stillDisconnected) return;
+
+      console.log(`セッションタイムアウト・退出: ${disconnectedPlayer.name} ルーム ${roomId}`);
+
+      const playerId = stillDisconnected.id;
+
+      // プレイヤーをリストから削除
+      currentRoom.players = currentRoom.players.filter(p => p.name !== disconnectedPlayer.name);
+      currentRoom.answers.delete(playerId);
+      if (currentRoom.openedFlips) currentRoom.openedFlips.delete(playerId);
+
+      if (currentRoom.players.length === 0) {
+        rooms.delete(roomId);
+        console.log(`ルーム削除（全員退出）: ${roomId}`);
+        return;
+      }
+
+      // ホストが完全退出した場合、アクティブなプレイヤーをホストに昇格
+      if (currentRoom.hostId === playerId) {
+        const nextActive = currentRoom.players.find(p => !p.disconnected) || currentRoom.players[0];
+        currentRoom.hostId = nextActive.id;
+        io.to(nextActive.id).emit('host-promoted', {
+          message: 'あなたがホストになりました'
+        });
+        console.log(`ホスト昇格: ${nextActive.name} ルーム ${roomId}`);
+      }
+
+      io.to(roomId).emit('player-left', {
+        players: currentRoom.players.map(p => ({ id: p.id, name: p.name, score: p.score }))
+      });
+
+      // submitting フェーズ再チェック
+      if (currentRoom.gameState === 'submitting' && currentRoom.players.length > 0) {
+        const activePlayers = currentRoom.players.filter(p => !p.disconnected);
+        const activeSubmitted = activePlayers.filter(p => currentRoom.answers.has(p.id)).length;
+        const submitted = currentRoom.answers.size;
+        const total = currentRoom.players.length;
+
+        io.to(roomId).emit('answer-count', { submitted, total });
+
+        if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
+          currentRoom.gameState = 'revealing';
+          currentRoom.openedFlips = new Set();
+          io.to(roomId).emit('all-submitted', {
+            players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+          });
+        }
+      }
+    }, DISCONNECT_TIMEOUT_MS);
+
+    disconnectSessions.set(sessionKey, {
+      timer,
+      playerId: socket.id,
+      roomId,
+      playerName: disconnectedPlayer.name
+    });
+
+    console.log(`プレイヤー切断（セッション保持30秒）: ${disconnectedPlayer.name} ルーム ${roomId}`);
   });
 
   // --- ランダムお題リクエスト ---

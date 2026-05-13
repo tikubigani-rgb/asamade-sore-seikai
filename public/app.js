@@ -4,7 +4,13 @@
 // ======================================
 // 初期化
 // ======================================
-const socket = io();
+const socket = io({
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 20000
+});
 
 // ゲーム状態
 let myPlayerId = null;
@@ -25,6 +31,105 @@ let currentCorrectAnswers = new Set();
 
 let undoStack = [];
 let redoStack = [];
+
+// 描画タイマー関連
+let submitTimerInterval = null;
+let submittingStartedAt = null;
+const SUBMIT_TIMER_DURATION_MS = 300000; // 5分
+
+// ======================================
+// 描画タイマー管理
+// ======================================
+function startSubmitTimer(startedAt) {
+  submittingStartedAt = startedAt;
+  stopSubmitTimer();
+
+  const timerEl = document.getElementById('submit-timer');
+  const timerVal = document.getElementById('submit-timer-value');
+  if (!timerEl || !timerVal) return;
+
+  timerEl.style.display = 'flex';
+
+  function tick() {
+    const elapsed = Date.now() - submittingStartedAt;
+    const remaining = SUBMIT_TIMER_DURATION_MS - elapsed;
+
+    if (remaining <= 0) {
+      timerVal.textContent = '時間切れ！';
+      timerVal.classList.remove('timer-warning');
+      timerVal.classList.add('timer-expired');
+      // ボタンをグレーアウト
+      const submitBtn = document.getElementById('btn-submit-answer');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.5';
+      }
+      stopSubmitTimer();
+      return;
+    }
+
+    const totalSec = Math.ceil(remaining / 1000);
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
+    timerVal.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
+
+    if (remaining <= 30000) {
+      timerVal.classList.add('timer-warning');
+      timerVal.classList.remove('timer-expired');
+    } else {
+      timerVal.classList.remove('timer-warning', 'timer-expired');
+    }
+  }
+
+  tick();
+  submitTimerInterval = setInterval(tick, 500);
+}
+
+function stopSubmitTimer() {
+  if (submitTimerInterval) {
+    clearInterval(submitTimerInterval);
+    submitTimerInterval = null;
+  }
+}
+
+function resetSubmitTimer() {
+  stopSubmitTimer();
+  submittingStartedAt = null;
+  const timerEl = document.getElementById('submit-timer');
+  const timerVal = document.getElementById('submit-timer-value');
+  if (timerEl) timerEl.style.display = 'none';
+  if (timerVal) {
+    timerVal.textContent = '5:00';
+    timerVal.classList.remove('timer-warning', 'timer-expired');
+  }
+}
+
+// ======================================
+// 切断オーバーレイ管理
+// ======================================
+let reconnectOverlay = null;
+
+function showReconnectOverlay(message) {
+  if (!reconnectOverlay) {
+    reconnectOverlay = document.createElement('div');
+    reconnectOverlay.id = 'reconnect-overlay';
+    reconnectOverlay.style.cssText = [
+      'position:fixed', 'top:0', 'left:0', 'width:100%', 'height:100%',
+      'background:rgba(0,0,0,0.75)', 'display:flex', 'flex-direction:column',
+      'align-items:center', 'justify-content:center', 'z-index:9999',
+      'color:#fff', 'font-size:1.2rem', 'text-align:center', 'padding:20px'
+    ].join(';');
+    document.body.appendChild(reconnectOverlay);
+  }
+  reconnectOverlay.innerHTML = `<p style="margin-bottom:12px">${message}</p>`;
+  reconnectOverlay.style.display = 'flex';
+}
+
+function hideReconnectOverlay() {
+  if (reconnectOverlay) {
+    reconnectOverlay.style.display = 'none';
+  }
+}
 
 // ======================================
 // 画面切り替え
@@ -603,6 +708,7 @@ document.addEventListener('DOMContentLoaded', () => {
     currentRoundNum = 1;
     totalRoundsNum = 5;
     resetRevealScreen();
+    resetSubmitTimer();
     currentCorrectAnswers = new Set();
     undoStack = [];
     redoStack = [];
@@ -748,7 +854,7 @@ socket.on('random-topic', ({ topic, char }) => {
 });
 
 // --- お題確定・回答入力開始 ---
-socket.on('topic-set', ({ topic, currentRound, totalRounds }) => {
+socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt: startedAt }) => {
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
@@ -764,7 +870,10 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds }) => {
 
   // 送信ボタンを再有効化
   const submitBtn = document.getElementById('btn-submit-answer');
-  if (submitBtn) submitBtn.disabled = false;
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.style.opacity = '';
+  }
 
   // お題・ラウンド表示（回答入力画面）
   document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
@@ -782,6 +891,11 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds }) => {
   // 公開画面をリセット
   resetRevealScreen();
 
+  // 描画タイマー開始
+  if (startedAt) {
+    startSubmitTimer(startedAt);
+  }
+
   showScreen('screen-submitting');
 });
 
@@ -796,6 +910,7 @@ socket.on('answer-count', ({ submitted, total }) => {
 
 // --- 全員回答完了（全員へ）---
 socket.on('all-submitted', ({ players }) => {
+  resetSubmitTimer();
   showToast('全員が回答しました！フリップを開きましょう！');
   // カードグリッドを構築
   buildFlipGrid(players);
@@ -985,6 +1100,9 @@ socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
+  // タイマーリセット
+  resetSubmitTimer();
+
   // 公開画面をリセット
   resetRevealScreen();
   currentCorrectAnswers = new Set();
@@ -1034,7 +1152,9 @@ socket.on('game-ended', ({ finalScores }) => {
 });
 
 // --- 再入室成功 ---
-socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount }) => {
+socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount, submittingStartedAt: startedAt }) => {
+  hideReconnectOverlay();
+  isRejoinPending = false;
   myPlayerId = playerId;
   myRoomId = roomId;
   hostPlayerId = hostId;
@@ -1095,6 +1215,11 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     document.getElementById('answer-progress-bar').style.width = pct + '%';
 
     resetRevealScreen();
+
+    // 描画タイマーを残り時間から再開
+    if (startedAt) {
+      startSubmitTimer(startedAt);
+    }
 
     if (hasSubmitted) {
       // すでに回答済み
@@ -1166,7 +1291,17 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
 
 // --- 再入室エラー ---
 socket.on('rejoin-error', ({ message }) => {
-  showToast('再入室エラー：' + message, 4000);
+  isRejoinPending = false;
+  // 自動再接続由来の場合はオーバーレイにエラーを表示
+  if (reconnectOverlay && reconnectOverlay.style.display !== 'none') {
+    showReconnectOverlay(
+      `再入室できませんでした<br><small>${escapeHTML(message)}</small><br>` +
+      '<button onclick="hideReconnectOverlay();myRoomId=null;showScreen(\'screen-home\')" ' +
+      'style="margin-top:12px;padding:10px 20px;font-size:1rem;cursor:pointer">ホームに戻る</button>'
+    );
+  } else {
+    showToast('再入室エラー：' + message, 4000);
+  }
 });
 
 // --- 他のプレイヤーが再入室 ---
@@ -1187,13 +1322,80 @@ socket.on('error', ({ message }) => {
 });
 
 // --- 接続断 ---
-socket.on('disconnect', () => {
-  showToast('サーバーとの接続が切れました。再接続しています...', 4000);
-});
-
-// --- 再接続 ---
-socket.on('connect', () => {
+socket.on('disconnect', (reason) => {
+  console.log('切断理由:', reason);
+  // ゲーム中の場合は再接続オーバーレイを表示
   if (myRoomId) {
-    showToast('再接続しました');
+    showReconnectOverlay('再接続中...<br><small>しばらくお待ちください</small>');
+  } else {
+    showToast('サーバーとの接続が切れました。再接続しています...', 4000);
   }
 });
+
+// --- 再接続試行中 ---
+socket.on('reconnect_attempt', (attemptNumber) => {
+  if (myRoomId) {
+    showReconnectOverlay(`再接続中... (試行 ${attemptNumber})<br><small>しばらくお待ちください</small>`);
+  }
+});
+
+// --- 再接続失敗（無制限のため通常は発火しないが念のため）---
+socket.on('reconnect_failed', () => {
+  if (myRoomId) {
+    showReconnectOverlay(
+      'サーバーから切断されました<br>' +
+      `<small>ルームID: ${myRoomId}</small><br>` +
+      '<button onclick="manualRejoin()" style="margin-top:12px;padding:10px 20px;font-size:1rem;cursor:pointer">再入室する</button>'
+    );
+  }
+});
+
+// 再接続時の二重 rejoin 送信防止フラグ
+let isRejoinPending = false;
+
+// --- 再接続成功 ---
+socket.on('reconnect', (attemptNumber) => {
+  console.log(`再接続成功 (試行 ${attemptNumber}回目)`);
+  hideReconnectOverlay();
+  if (myRoomId && !isRejoinPending) {
+    // 自動的に再入室を試みる
+    const savedName = loadPlayerName();
+    if (savedName) {
+      isRejoinPending = true;
+      showToast('再接続しました。ゲームに復帰しています...', 3000);
+      socket.emit('rejoin-room', { roomId: myRoomId, playerName: savedName });
+    }
+  }
+});
+
+// --- 接続（初回）---
+// ※ Socket.io v4 では再接続時は reconnect イベントが先に発火するため
+//    connect は初回接続のみ自動再入室処理を行う必要がない
+//    ただし reconnect イベントが発火しないケース（transport入替時など）のフォールバックとして残す
+socket.on('connect', () => {
+  hideReconnectOverlay();
+});
+
+// --- 他のプレイヤーが切断（一時的） ---
+socket.on('player-disconnected', ({ playerName, players }) => {
+  totalPlayers = players.filter(p => !p.disconnected).length;
+  showToast(`${escapeHTML(playerName)} さんが一時的に切断しました`, 3000);
+  // ロビーにいる場合はプレイヤーリストを更新
+  const activeScreen = document.querySelector('.screen.active');
+  if (activeScreen && activeScreen.id === 'screen-lobby') {
+    renderLobbyPlayers(players.filter(p => !p.disconnected));
+  }
+});
+
+// 手動再入室（再接続失敗時のボタン用）
+function manualRejoin() {
+  const savedName = loadPlayerName();
+  if (!savedName || !myRoomId) {
+    hideReconnectOverlay();
+    myRoomId = null;
+    myPlayerId = null;
+    showScreen('screen-home');
+    return;
+  }
+  socket.emit('rejoin-room', { roomId: myRoomId, playerName: savedName });
+}

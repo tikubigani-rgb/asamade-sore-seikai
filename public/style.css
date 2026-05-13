@@ -811,6 +811,54 @@ textarea {
 }
 
 /* ===================================
+   描画タイマー
+=================================== */
+.submit-timer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--color-white);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 20px;
+  margin-bottom: 16px;
+  font-weight: 700;
+}
+
+.submit-timer-label {
+  font-size: 0.85rem;
+  color: var(--color-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.submit-timer-value {
+  font-size: 1.6rem;
+  font-weight: 900;
+  color: var(--color-main);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+  min-width: 60px;
+  text-align: center;
+}
+
+.submit-timer-value.timer-warning {
+  color: #e53935;
+  animation: timerBlink 0.8s ease-in-out infinite;
+}
+
+.submit-timer-value.timer-expired {
+  color: var(--color-gray);
+  animation: none;
+}
+
+@keyframes timerBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ===================================
    変更3: キャンバス手書きUI
 =================================== */
 
