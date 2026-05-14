@@ -404,28 +404,10 @@ io.on('connection', (socket) => {
     room.submittingStartedAt = Date.now(); // 5分タイマー開始時刻を記録
 
     // 以前の回答タイムアウトをクリア
-    if (room.submitTimeout) {
-      clearTimeout(room.submitTimeout);
-      room.submitTimeout = null;
-    }
     if (room.submitTimeout5min) {
       clearTimeout(room.submitTimeout5min);
       room.submitTimeout5min = null;
     }
-
-    // 60秒後に強制的にrevealingフェーズへ（デッドロック防止）
-    room.submitTimeout = setTimeout(() => {
-      const currentRoom = rooms.get(socket.roomId);
-      if (!currentRoom || currentRoom.gameState !== 'submitting') return;
-
-      console.log(`回答タイムアウト（60秒）→ revealing へ強制移行: ルーム ${socket.roomId}`);
-      currentRoom.gameState = 'revealing';
-      currentRoom.openedFlips = new Set();
-      const activePlayers = currentRoom.players.filter(p => !p.disconnected);
-      io.to(socket.roomId).emit('all-submitted', {
-        players: activePlayers.map(p => ({ id: p.id, name: p.name }))
-      });
-    }, 60000);
 
     // 5分（300秒）後に強制的にrevealingフェーズへ（描画タイマー）
     room.submitTimeout5min = setTimeout(() => {
@@ -486,10 +468,6 @@ io.on('connection', (socket) => {
     // アクティブプレイヤー全員回答完了（または全員回答完了）
     if (submitted >= total || (activePlayers.length > 0 && activeSubmitted >= activePlayers.length)) {
       // タイムアウトをクリア
-      if (room.submitTimeout) {
-        clearTimeout(room.submitTimeout);
-        room.submitTimeout = null;
-      }
       if (room.submitTimeout5min) {
         clearTimeout(room.submitTimeout5min);
         room.submitTimeout5min = null;
@@ -512,9 +490,11 @@ io.on('connection', (socket) => {
     if (room.gameState !== 'revealing') return;
     if (room.openedFlips.has(socket.id)) return; // 二重公開防止
 
-    const answer = room.answers.get(socket.id);
     const player = room.players.find(p => p.id === socket.id);
-    if (!answer || !player) return;
+    if (!player) return;
+
+    // 5分タイムアウト等で強制移行後、未送信の場合も null で公開可能にする
+    const answer = room.answers.get(socket.id) || null;
 
     room.openedFlips.add(socket.id);
 
@@ -617,10 +597,6 @@ io.on('connection', (socket) => {
       room.openedFlips = new Set(); // フリップ公開済みをリセット
       room.topic = '';
       room.submittingStartedAt = null;
-      if (room.submitTimeout) {
-        clearTimeout(room.submitTimeout);
-        room.submitTimeout = null;
-      }
       if (room.submitTimeout5min) {
         clearTimeout(room.submitTimeout5min);
         room.submitTimeout5min = null;

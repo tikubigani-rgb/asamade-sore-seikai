@@ -939,8 +939,10 @@ socket.on('flip-opened', ({ playerId, playerName, answer, openedCount, total }) 
     const back = card.querySelector('.flip-card-back');
     if (answer && answer.startsWith('data:image/')) {
       back.innerHTML = `<img src="${answer}" class="answer-image" alt="回答">`;
-    } else {
+    } else if (answer) {
       back.innerHTML = `<span class="answer-text">${escapeHTML(answer)}</span>`;
+    } else {
+      back.innerHTML = `<span class="answer-text" style="color:var(--color-gray);font-size:0.9rem;">（未回答）</span>`;
     }
     // フリップアニメーション
     setTimeout(() => {
@@ -995,6 +997,7 @@ function buildCorrectCandidates() {
   container.innerHTML = '';
 
   allAnswers.forEach(item => {
+    if (!item.answer) return; // 未回答はスキップ
     const btn = document.createElement('button');
     btn.className = 'correct-candidate-btn';
     btn.dataset.answer = item.answer;
