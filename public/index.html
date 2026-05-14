@@ -132,15 +132,15 @@
         <!-- フリップカード手書き入力UI -->
         <div class="flip-card-area">
           <div class="flip-card-label">ここに答えを書いてね</div>
-          <canvas id="answer-canvas" width="1000" height="700"></canvas>
+          <canvas id="answer-canvas" width="1600" height="1000"></canvas>
           <div class="flip-card-tools">
             <button class="btn btn-ghost" id="btn-undo-canvas">取り消し</button>
             <button class="btn btn-ghost" id="btn-redo-canvas">やり直し</button>
             <button class="btn btn-ghost" id="btn-clear-canvas">全消去</button>
             <div class="pen-size-selector">
-              <button class="pen-size-btn active" data-size="6">細</button>
-              <button class="pen-size-btn" data-size="12">中</button>
-              <button class="pen-size-btn" data-size="20">太</button>
+              <button class="pen-size-btn active" data-size="8">細</button>
+              <button class="pen-size-btn" data-size="16">中</button>
+              <button class="pen-size-btn" data-size="26">太</button>
             </div>
           </div>
           <button class="btn btn-primary btn-large" id="btn-submit-answer">決定</button>
@@ -172,8 +172,7 @@
       </div>
       <!-- ホスト用：正解選択エリア（全員公開後に表示） -->
       <div class="host-correct-area" id="host-correct-area" style="display:none;">
-        <h3>正解の回答を選んでください</h3>
-        <div class="correct-candidates" id="correct-candidates"></div>
+        <h3>正解の回答をカードから選んでください（複数選択可）</h3>
         <button class="btn btn-primary btn-large" id="btn-end-round">ラウンドを終了する</button>
       </div>
     </div>

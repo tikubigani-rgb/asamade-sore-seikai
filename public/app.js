@@ -282,7 +282,7 @@ function resetRevealScreen() {
 // ======================================
 let canvasCtx = null;     // canvasの描画コンテキスト
 let isDrawing = false;    // 描画中かどうか
-let penSize = 6;          // 現在のペンサイズ（デフォルト：細）
+let penSize = 8;          // 現在のペンサイズ（デフォルト：細）
 let lastX = 0;
 let lastY = 0;
 
@@ -809,7 +809,7 @@ socket.on('host-promoted', ({ message }) => {
   } else if (screenId === 'screen-revealing') {
     // 全員公開済みの場合、正解選択エリアを表示
     if (allAnswers.length > 0) {
-      buildCorrectCandidates();
+      enableFlipCardSelection();
       document.getElementById('host-correct-area').style.display = 'block';
       document.getElementById('my-flip-controls').style.display = 'none';
     }
@@ -957,9 +957,9 @@ socket.on('flip-opened', ({ playerId, playerName, answer, openedCount, total }) 
   if (openedCount >= total) {
     // フリップボタンを非表示
     document.getElementById('my-flip-controls').style.display = 'none';
-    // ホストに正解選択エリアを表示
+    // ホストに正解選択エリアを表示（カード直接タップで選択）
     if (isHost) {
-      buildCorrectCandidates();
+      enableFlipCardSelection();
       document.getElementById('host-correct-area').style.display = 'block';
     }
   }
@@ -990,57 +990,23 @@ function buildFlipGrid(players) {
   });
 }
 
-// 正解候補ボタンを構築（ホスト用）
-function buildCorrectCandidates() {
-  const container = document.getElementById('correct-candidates');
-  if (!container) return;
-  container.innerHTML = '';
-
+// フリップカードを正解選択可能にする（ホスト用）
+function enableFlipCardSelection() {
   allAnswers.forEach(item => {
-    if (!item.answer) return; // 未回答はスキップ
-    const btn = document.createElement('button');
-    btn.className = 'correct-candidate-btn';
-    btn.dataset.answer = item.answer;
-
-    if (item.answer && item.answer.startsWith('data:image/')) {
-      const img = document.createElement('img');
-      img.src = item.answer;
-      img.alt = escapeHTML(item.playerName) + 'の回答';
-      img.style.maxWidth = '80px';
-      img.style.maxHeight = '60px';
-      img.style.objectFit = 'contain';
-      img.style.display = 'block';
-      img.style.margin = '0 auto 4px';
-      btn.appendChild(img);
-      const nameSpan = document.createElement('span');
-      nameSpan.style.display = 'block';
-      nameSpan.style.fontSize = '0.75rem';
-      nameSpan.textContent = item.playerName;
-      btn.appendChild(nameSpan);
-    } else {
-      btn.textContent = item.playerName + ': ' + item.answer;
-    }
-
-    btn.addEventListener('click', () => {
+    if (!item.answer) return;
+    const card = document.getElementById('card-' + item.playerId);
+    if (!card || card.dataset.selectionEnabled === '1') return;
+    card.dataset.selectionEnabled = '1';
+    card.classList.add('host-selectable');
+    card.addEventListener('click', () => {
       socket.emit('mark-correct', { answer: item.answer });
     });
-
-    container.appendChild(btn);
   });
 }
 
 // --- 正解マーク更新（複数選択） ---
 socket.on('correct-marked', ({ answer, selected, selectedAnswers }) => {
   currentCorrectAnswers = new Set(selectedAnswers || []);
-
-  const candidateBtns = document.querySelectorAll('.correct-candidate-btn');
-  candidateBtns.forEach(btn => {
-    if (currentCorrectAnswers.has(btn.dataset.answer)) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
 
   document.querySelectorAll('.flip-card').forEach(card => {
     card.classList.remove('correct-flip');

@@ -872,14 +872,14 @@ textarea {
   display: block;
   margin: 0 auto;
   width: 100%;
-  max-width: 1000px;
+  max-width: 1600px;
   height: auto;
 }
 
 /* 回答入力・回答公開画面のscreen-innerを幅広に */
 #screen-submitting .screen-inner,
 #screen-revealing .screen-inner {
-  max-width: 820px;
+  max-width: 1500px;
 }
 
 /* フリップカードエリア全体 */
@@ -906,7 +906,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  max-width: 1000px;
+  max-width: 1600px;
   gap: 12px;
 }
 
@@ -962,16 +962,17 @@ textarea {
    変更2: フリップカードグリッド（回答公開画面）
 =================================== */
 .flip-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  justify-content: center;
   margin: 16px 0;
+  width: 100%;
 }
 
 .flip-card {
-  width: 160px;
-  height: 120px;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 8 / 5;
   perspective: 800px;
 }
 
@@ -1045,8 +1046,39 @@ textarea {
 }
 
 .flip-card.correct-flip .flip-card-back {
-  border: 3px solid #FF6B35;
-  box-shadow: 0 0 16px rgba(255,107,53,0.5);
+  border: 3px solid var(--color-correct);
+  box-shadow: 0 0 20px rgba(76, 175, 80, 0.6);
+  background: var(--color-correct-light);
+}
+
+.flip-card.correct-flip::after {
+  content: '✓';
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 26px;
+  height: 26px;
+  background: var(--color-correct);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* ホストが正解選択できる状態のカード */
+.flip-card.host-selectable {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.flip-card.host-selectable:hover {
+  transform: translateY(-4px);
+  filter: brightness(1.05);
 }
 
 .my-flip-controls {
@@ -1068,61 +1100,6 @@ textarea {
   text-align: center;
 }
 
-.correct-candidates {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  margin: 12px 0;
-}
-
-.correct-candidate-btn {
-  padding: 10px 16px;
-  border: 2px solid #ccc;
-  border-radius: 8px;
-  background: white;
-  cursor: pointer;
-  font-family: 'M PLUS Rounded 1c', sans-serif;
-  font-size: 0.9rem;
-  font-weight: 700;
-  transition: all 0.2s;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.correct-candidate-btn.active {
-  border-color: #FF6B35;
-  background: #FF6B35;
-  color: white;
-}
-
-/* ===================================
-   変更2: 正解選択ボタン（ラジオ的）
-=================================== */
-.btn-correct-select {
-  flex-shrink: 0;
-  padding: 8px 14px;
-  border: 2px solid var(--color-correct);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-correct);
-  font-family: 'M PLUS Rounded 1c', sans-serif;
-  font-size: 0.85rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all var(--transition);
-  white-space: nowrap;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.btn-correct-select:hover {
-  background: rgba(76, 175, 80, 0.1);
-}
-
-/* 選択状態 */
-.btn-correct-select.selected {
-  background: var(--color-correct);
-  color: var(--color-white);
-}
 
 /* ===================================
    ユーティリティ
