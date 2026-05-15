@@ -120,7 +120,7 @@
   <!-- 変更3: テキストエリアからキャンバス手書きUIへ変更 -->
   <div id="screen-submitting" class="screen">
     <div class="screen-inner">
-      <div class="round-badge" id="submitting-round-badge">第1ラウンド</div>
+      <div class="round-badge" id="submitting-round-badge" style="display:none;">第1ラウンド</div>
       <div class="topic-display" id="submitting-topic" style="display:none;">お題</div>
       <div class="submitting-wrapper">
         <div class="submitting-main">
@@ -155,7 +155,7 @@
               </div>
               <!-- CENTER: キャンバス -->
               <div class="canvas-center">
-                <div class="flip-card-label">ここに答えを書いてね</div>
+                <div class="canvas-topic-banner" id="canvas-topic-banner"></div>
                 <canvas id="answer-canvas" width="1280" height="800"></canvas>
               </div>
             </div>
@@ -167,9 +167,14 @@
         </div>
         <!-- RIGHT: 決定ボタン＋進捗（常に表示） -->
         <div class="canvas-right-panel">
+          <div class="round-info-compact" id="round-info-compact">
+            <span class="round-info-current" id="round-info-current">1</span>
+            <span class="round-info-label">ラウンド</span>
+            <span class="round-info-sep">/全</span>
+            <span class="round-info-total" id="round-info-total">5</span>
+          </div>
           <button class="btn btn-primary btn-large" id="btn-submit-answer">決定</button>
           <div class="submit-timer" id="submit-timer" style="display:none;">
-            <span class="submit-timer-topic" id="submit-timer-topic"></span>
             <div class="submit-timer-countdown" id="submit-timer-countdown" style="display:none;">
               <span class="submit-timer-label">残り時間</span>
               <span class="submit-timer-value" id="submit-timer-value">5:00</span>

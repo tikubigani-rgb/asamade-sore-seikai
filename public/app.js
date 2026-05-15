@@ -106,8 +106,6 @@ function resetSubmitTimer() {
     timerVal.textContent = '5:00';
     timerVal.classList.remove('timer-warning', 'timer-expired');
   }
-  const timerTopic = document.getElementById('submit-timer-topic');
-  if (timerTopic) timerTopic.textContent = '';
 }
 
 // ======================================
@@ -888,10 +886,14 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt:
 
   // お題・ラウンド表示（回答入力画面）
   document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
-  const timerTopicEl = document.getElementById('submit-timer-topic');
-  if (timerTopicEl) timerTopicEl.textContent = topic;
-  const timerDisplayEl = document.getElementById('submit-timer');
-  if (timerDisplayEl) timerDisplayEl.style.display = 'flex';
+  // キャンバス上部にお題を表示
+  const canvasBanner = document.getElementById('canvas-topic-banner');
+  if (canvasBanner) canvasBanner.textContent = topic;
+  // ラウンド情報ボックスを更新
+  const roundCurrent = document.getElementById('round-info-current');
+  const roundTotal = document.getElementById('round-info-total');
+  if (roundCurrent) roundCurrent.textContent = currentRound;
+  if (roundTotal) roundTotal.textContent = totalRounds;
 
   // 回答公開画面のお題も更新しておく
   const revealingTopic = document.getElementById('revealing-topic');
@@ -1187,10 +1189,12 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     }
 
     document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
-      const timerTopicEl = document.getElementById('submit-timer-topic');
-    if (timerTopicEl) timerTopicEl.textContent = topic;
-    const timerDisplayEl = document.getElementById('submit-timer');
-    if (timerDisplayEl) timerDisplayEl.style.display = 'flex';
+    const canvasBanner = document.getElementById('canvas-topic-banner');
+    if (canvasBanner) canvasBanner.textContent = topic;
+    const roundCurrent = document.getElementById('round-info-current');
+    const roundTotal = document.getElementById('round-info-total');
+    if (roundCurrent) roundCurrent.textContent = currentRound;
+    if (roundTotal) roundTotal.textContent = totalRounds;
 
     const revealingTopic = document.getElementById('revealing-topic');
     if (revealingTopic) revealingTopic.textContent = topic;
