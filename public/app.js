@@ -46,9 +46,11 @@ function startSubmitTimer(startedAt) {
 
   const timerEl = document.getElementById('submit-timer');
   const timerVal = document.getElementById('submit-timer-value');
+  const timerCountdown = document.getElementById('submit-timer-countdown');
   if (!timerEl || !timerVal) return;
 
   timerEl.style.display = 'flex';
+  if (timerCountdown) timerCountdown.style.display = 'flex';
 
   function tick() {
     const elapsed = Date.now() - submittingStartedAt;
@@ -97,11 +99,15 @@ function resetSubmitTimer() {
   submittingStartedAt = null;
   const timerEl = document.getElementById('submit-timer');
   const timerVal = document.getElementById('submit-timer-value');
+  const timerCountdown = document.getElementById('submit-timer-countdown');
   if (timerEl) timerEl.style.display = 'none';
+  if (timerCountdown) timerCountdown.style.display = 'none';
   if (timerVal) {
     timerVal.textContent = '5:00';
     timerVal.classList.remove('timer-warning', 'timer-expired');
   }
+  const timerTopic = document.getElementById('submit-timer-topic');
+  if (timerTopic) timerTopic.textContent = '';
 }
 
 // ======================================
@@ -282,7 +288,7 @@ function resetRevealScreen() {
 // ======================================
 let canvasCtx = null;     // canvasの描画コンテキスト
 let isDrawing = false;    // 描画中かどうか
-let penSize = 8;          // 現在のペンサイズ（デフォルト：細）
+let penSize = 12;         // 現在のペンサイズ（デフォルト：中）
 let lastX = 0;
 let lastY = 0;
 
@@ -882,7 +888,10 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt:
 
   // お題・ラウンド表示（回答入力画面）
   document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
-  document.getElementById('submitting-topic').textContent = topic;
+  const timerTopicEl = document.getElementById('submit-timer-topic');
+  if (timerTopicEl) timerTopicEl.textContent = topic;
+  const timerDisplayEl = document.getElementById('submit-timer');
+  if (timerDisplayEl) timerDisplayEl.style.display = 'flex';
 
   // 回答公開画面のお題も更新しておく
   const revealingTopic = document.getElementById('revealing-topic');
@@ -1178,7 +1187,10 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     }
 
     document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
-    document.getElementById('submitting-topic').textContent = topic;
+      const timerTopicEl = document.getElementById('submit-timer-topic');
+    if (timerTopicEl) timerTopicEl.textContent = topic;
+    const timerDisplayEl = document.getElementById('submit-timer');
+    if (timerDisplayEl) timerDisplayEl.style.display = 'flex';
 
     const revealingTopic = document.getElementById('revealing-topic');
     if (revealingTopic) revealingTopic.textContent = topic;
@@ -1211,8 +1223,7 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
 
   } else if (gameState === 'revealing') {
     // 回答公開画面へ（回答公開中に再入室）
-    document.getElementById('submitting-topic').textContent = topic;
-    const revealingTopic = document.getElementById('revealing-topic');
+      const revealingTopic = document.getElementById('revealing-topic');
     if (revealingTopic) revealingTopic.textContent = topic;
 
     const badge = document.getElementById('revealing-round-badge');

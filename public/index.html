@@ -121,13 +121,7 @@
   <div id="screen-submitting" class="screen">
     <div class="screen-inner">
       <div class="round-badge" id="submitting-round-badge">第1ラウンド</div>
-      <div class="topic-display" id="submitting-topic">お題</div>
-      <!-- 描画タイマー表示 -->
-      <div class="submit-timer" id="submit-timer" style="display:none;">
-        <span class="submit-timer-label">残り時間</span>
-        <span class="submit-timer-value" id="submit-timer-value">5:00</span>
-      </div>
-
+      <div class="topic-display" id="submitting-topic" style="display:none;">お題</div>
       <div class="submitting-wrapper">
         <div class="submitting-main">
           <div class="answer-form" id="answer-form">
@@ -154,9 +148,9 @@
                 </button>
                 <div class="tool-divider"></div>
                 <div class="pen-size-selector">
-                  <button class="pen-size-btn active" data-size="8">細</button>
-                  <button class="pen-size-btn" data-size="16">中</button>
-                  <button class="pen-size-btn" data-size="26">太</button>
+                  <button class="pen-size-btn" data-size="8">細</button>
+                  <button class="pen-size-btn active" data-size="12">中</button>
+                  <button class="pen-size-btn" data-size="18">太</button>
                 </div>
               </div>
               <!-- CENTER: キャンバス -->
@@ -174,6 +168,13 @@
         <!-- RIGHT: 決定ボタン＋進捗（常に表示） -->
         <div class="canvas-right-panel">
           <button class="btn btn-primary btn-large" id="btn-submit-answer">決定</button>
+          <div class="submit-timer" id="submit-timer" style="display:none;">
+            <span class="submit-timer-topic" id="submit-timer-topic"></span>
+            <div class="submit-timer-countdown" id="submit-timer-countdown" style="display:none;">
+              <span class="submit-timer-label">残り時間</span>
+              <span class="submit-timer-value" id="submit-timer-value">5:00</span>
+            </div>
+          </div>
           <div class="answer-progress-side">
             <div class="progress-bar-container">
               <div class="progress-bar" id="answer-progress-bar"></div>

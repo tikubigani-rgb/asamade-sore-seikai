@@ -19,6 +19,9 @@ const PORT = process.env.PORT || 3000;
 // 静的ファイル配信
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ヘルスチェック用エンドポイント
+app.get('/ping', (req, res) => res.send('pong'));
+
 // ルーム管理
 const rooms = new Map();
 
@@ -861,6 +864,17 @@ io.on('connection', (socket) => {
     socket.emit('random-topic', { topic, char });
   });
 });
+
+// Renderスリープ防止：自己pingを14分ごとに実行
+const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL || null;
+if (SELF_PING_URL) {
+  setInterval(() => {
+    fetch(SELF_PING_URL + '/ping')
+      .then(() => console.log('self-ping OK'))
+      .catch(err => console.error('self-ping failed:', err.message));
+  }, 14 * 60 * 1000);
+  console.log(`self-ping 設定: ${SELF_PING_URL}/ping (14分間隔)`);
+}
 
 // サーバー起動
 server.listen(PORT, () => {
