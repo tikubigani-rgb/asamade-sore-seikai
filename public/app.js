@@ -668,7 +668,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // base64で圧縮して送信（JPEG、品質0.7）
     const imageData = canvas.toDataURL('image/jpeg', 0.7);
-    socket.emit('submit-answer', { answer: imageData });
+    socket.emit('submit-answer', { answer: imageData, roomId: myRoomId });
 
     // 送信後UI更新
     document.getElementById('answer-form').style.display = 'none';
@@ -1310,9 +1310,13 @@ socket.on('error', ({ message }) => {
   showToast('エラー：' + message, 3000);
 });
 
+// 再接続時の二重 rejoin 送信防止フラグ
+let isRejoinPending = false;
+
 // --- 接続断 ---
 socket.on('disconnect', (reason) => {
   console.log('切断理由:', reason);
+  isRejoinPending = false; // フラグをリセットして次の reconnect で必ず rejoin を送信
   // ゲーム中の場合は再接続オーバーレイを表示
   if (myRoomId) {
     showReconnectOverlay('再接続中...<br><small>しばらくお待ちください</small>');
@@ -1338,9 +1342,6 @@ socket.on('reconnect_failed', () => {
     );
   }
 });
-
-// 再接続時の二重 rejoin 送信防止フラグ
-let isRejoinPending = false;
 
 // --- 再接続成功 ---
 socket.on('reconnect', (attemptNumber) => {

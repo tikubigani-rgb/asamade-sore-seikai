@@ -438,9 +438,26 @@ io.on('connection', (socket) => {
   });
 
   // --- 回答送信（base64画像対応） ---
-  socket.on('submit-answer', ({ answer }) => {
-    const room = rooms.get(socket.roomId);
-    if (!room) return;
+  socket.on('submit-answer', ({ answer, roomId: payloadRoomId }) => {
+    let room = rooms.get(socket.roomId);
+    let resolvedRoomId = socket.roomId;
+
+    // Socket.io v4 は再接続時に send buffer を reconnect イベントより先にフラッシュするため
+    // submit-answer が rejoin-room より先に届く場合がある。
+    // その場合 payloadRoomId でルームを特定し、socket をルームに参加させてから処理を続ける。
+    // rejoin-room が後で届いた際、既存の回答ID付け替えロジック（rejoin-room ハンドラ内）が
+    // new socket.id で保存された回答を正しく処理する。
+    if (!room && payloadRoomId) {
+      room = rooms.get(payloadRoomId);
+      resolvedRoomId = payloadRoomId;
+      if (room) {
+        socket.roomId = resolvedRoomId;
+        socket.join(resolvedRoomId);
+        console.log(`submit-answer フォールバック: roomId=${payloadRoomId} (rejoin-room より先に到達)`);
+      }
+    }
+
+    if (!room || !resolvedRoomId) return;
 
     if (room.gameState !== 'submitting') {
       socket.emit('error', { message: '回答受付中ではありません' });
@@ -466,7 +483,7 @@ io.on('connection', (socket) => {
     const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
 
     // 全員に回答数を通知
-    io.to(socket.roomId).emit('answer-count', { submitted, total });
+    io.to(resolvedRoomId).emit('answer-count', { submitted, total });
 
     // アクティブプレイヤー全員回答完了（または全員回答完了）
     if (submitted >= total || (activePlayers.length > 0 && activeSubmitted >= activePlayers.length)) {
@@ -478,12 +495,12 @@ io.on('connection', (socket) => {
       room.gameState = 'revealing';
       room.openedFlips = new Set(); // フリップ公開済みをリセット
       // 全員に通知（アクティブプレイヤー情報付き）
-      io.to(socket.roomId).emit('all-submitted', {
+      io.to(resolvedRoomId).emit('all-submitted', {
         players: activePlayers.map(p => ({ id: p.id, name: p.name }))
       });
     }
 
-    console.log(`回答受付: ${submitted}/${total} ルーム ${socket.roomId}`);
+    console.log(`回答受付: ${submitted}/${total} ルーム ${resolvedRoomId}`);
   });
 
   // --- フリップ公開（各プレイヤーが任意のタイミングで自分の回答を公開）---
@@ -711,6 +728,24 @@ io.on('connection', (socket) => {
     };
 
     socket.emit('rejoin-success', gameStateInfo);
+
+    // submitting状態でかつ全アクティブプレイヤーが回答済みなら all-submitted を発火
+    if (room.gameState === 'submitting') {
+      const activePlayers = room.players.filter(p => !p.disconnected);
+      const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
+      if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
+        if (room.submitTimeout5min) {
+          clearTimeout(room.submitTimeout5min);
+          room.submitTimeout5min = null;
+        }
+        room.gameState = 'revealing';
+        room.openedFlips = new Set();
+        io.to(upperRoomId).emit('all-submitted', {
+          players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+        });
+        console.log(`rejoin後 全員提出完了: ルーム ${upperRoomId}`);
+      }
+    }
 
     // 既存プレイヤーに通知
     socket.to(upperRoomId).emit('player-rejoined', {
