@@ -866,7 +866,11 @@ io.on('connection', (socket) => {
 });
 
 // Renderスリープ防止：自己pingを14分ごとに実行
-const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL || null;
+// RENDER_EXTERNAL_URL・RENDER_EXTERNAL_HOSTNAMEはRenderが自動でセットする変数
+const SELF_PING_URL =
+  process.env.RENDER_EXTERNAL_URL ||
+  (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : null);
+
 if (SELF_PING_URL) {
   setInterval(() => {
     fetch(SELF_PING_URL + '/ping')
