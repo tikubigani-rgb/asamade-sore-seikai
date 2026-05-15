@@ -72,6 +72,14 @@
             <button class="btn btn-round-select" data-rounds="10">10</button>
           </div>
         </div>
+        <div class="input-group">
+          <label>制限時間</label>
+          <div class="rounds-selector">
+            <button class="btn btn-round-select" data-timer="3">3分</button>
+            <button class="btn btn-round-select" data-timer="4">4分</button>
+            <button class="btn btn-round-select active" data-timer="5">5分</button>
+          </div>
+        </div>
         <button class="btn btn-primary btn-large" id="btn-start-game">ゲームスタート！</button>
       </div>
       <div class="guest-waiting" id="guest-waiting" style="display:none;">
@@ -128,29 +136,35 @@
             <div class="canvas-layout">
               <!-- LEFT: ツールパネル -->
               <div class="canvas-left-panel">
-                <button class="tool-btn" id="btn-undo-canvas" title="取り消し">
+                <button class="tool-btn" id="btn-undo-canvas" title="取り消し (Ctrl+Z)">
                   <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="1 4 1 10 7 10"/>
                     <path d="M3.51 15a9 9 0 1 0 .49-3.79"/>
                   </svg>
                 </button>
-                <button class="tool-btn" id="btn-redo-canvas" title="やり直し">
+                <button class="tool-btn" id="btn-redo-canvas" title="やり直し (Ctrl+Shift+Z)">
                   <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="23 4 23 10 17 10"/>
                     <path d="M20.49 15a9 9 0 1 1-.49-3.79"/>
                   </svg>
                 </button>
-                <button class="tool-btn" id="btn-clear-canvas" title="全消去">
+                <button class="tool-btn" id="btn-clear-canvas" title="全消去 (Delete)">
                   <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M20 20H7L3 16l13-13 8 8-5.5 5.5"/>
                     <path d="M6 11l8 8"/>
                   </svg>
                 </button>
+                <button class="tool-btn" id="btn-eraser" title="消しゴム (A/S/D)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 20H7L3 16l9-9 8 8z"/>
+                    <path d="M6.5 17.5l5-5"/>
+                  </svg>
+                </button>
                 <div class="tool-divider"></div>
                 <div class="pen-size-selector">
-                  <button class="pen-size-btn" data-size="8">細</button>
-                  <button class="pen-size-btn active" data-size="12">中</button>
-                  <button class="pen-size-btn" data-size="18">太</button>
+                  <button class="pen-size-btn" data-size="8" title="細 (Q/A)">細</button>
+                  <button class="pen-size-btn active" data-size="12" title="中 (W/S)">中</button>
+                  <button class="pen-size-btn" data-size="18" title="太 (E/D)">太</button>
                 </div>
               </div>
               <!-- CENTER: キャンバス -->
@@ -173,7 +187,7 @@
             <span class="round-info-sep">/全</span>
             <span class="round-info-total" id="round-info-total">5</span>
           </div>
-          <button class="btn btn-primary btn-large" id="btn-submit-answer">決定</button>
+          <button class="btn btn-primary btn-large" id="btn-submit-answer" title="決定 (Ctrl+Enter)">決定</button>
           <div class="submit-timer" id="submit-timer" style="display:none;">
             <div class="submit-timer-countdown" id="submit-timer-countdown" style="display:none;">
               <span class="submit-timer-label">残り時間</span>

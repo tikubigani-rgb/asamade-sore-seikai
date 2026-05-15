@@ -298,7 +298,8 @@ io.on('connection', (socket) => {
       answers: new Map(),
       revealedAnswers: [],
       correctAnswers: new Set(), // 複数正解対応
-      openedFlips: new Set() // 変更2: フリップ公開済みplayerIdのSet
+      openedFlips: new Set(), // 変更2: フリップ公開済みplayerIdのSet
+      timerDuration: 300000 // 回答制限時間（ms）。start-gameで上書きされる
     };
 
     rooms.set(roomId, roomState);
@@ -367,7 +368,7 @@ io.on('connection', (socket) => {
   });
 
   // --- ゲーム開始（ホストのみ） ---
-  socket.on('start-game', ({ totalRounds }) => {
+  socket.on('start-game', ({ totalRounds, timerMinutes }) => {
     const room = rooms.get(socket.roomId);
     if (!room) return;
 
@@ -381,9 +382,14 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const rounds = parseInt(totalRounds);
+    const rounds = parseInt(totalRounds, 10);
     if ([3, 5, 7, 10].includes(rounds)) {
       room.totalRounds = rounds;
+    }
+
+    const mins = parseInt(timerMinutes, 10);
+    if ([3, 4, 5].includes(mins)) {
+      room.timerDuration = mins * 60000;
     }
 
     room.gameState = 'topic-setting';
@@ -394,7 +400,8 @@ io.on('connection', (socket) => {
       topic: '',
       currentRound: room.currentRound,
       totalRounds: room.totalRounds,
-      isHost: true
+      isHost: true,
+      timerDuration: room.timerDuration
     });
 
     // 他プレイヤーは待機
@@ -402,7 +409,8 @@ io.on('connection', (socket) => {
       topic: '',
       currentRound: room.currentRound,
       totalRounds: room.totalRounds,
-      isHost: false
+      isHost: false,
+      timerDuration: room.timerDuration
     });
 
     console.log(`ゲーム開始: ルーム ${socket.roomId} / ${room.totalRounds}ラウンド`);
@@ -430,7 +438,7 @@ io.on('connection', (socket) => {
     room.correctAnswers = new Set();
     room.openedFlips = new Set(); // フリップ公開済みをリセット
     room.gameState = 'submitting';
-    room.submittingStartedAt = Date.now(); // 5分タイマー開始時刻を記録
+    room.submittingStartedAt = Date.now(); // タイマー開始時刻を記録
 
     // 以前の回答タイムアウトをクリア
     if (room.submitTimeout5min) {
@@ -438,26 +446,28 @@ io.on('connection', (socket) => {
       room.submitTimeout5min = null;
     }
 
-    // 5分（300秒）後に強制的にrevealingフェーズへ（描画タイマー）
+    // 制限時間後に強制的にrevealingフェーズへ
+    const timerMs = room.timerDuration || 300000;
     room.submitTimeout5min = setTimeout(() => {
       const currentRoom = rooms.get(socket.roomId);
       if (!currentRoom || currentRoom.gameState !== 'submitting') return;
 
-      console.log(`回答タイムアウト（5分）→ revealing へ強制移行: ルーム ${socket.roomId}`);
+      console.log(`回答タイムアウト（${timerMs / 60000}分）→ revealing へ強制移行: ルーム ${socket.roomId}`);
       currentRoom.gameState = 'revealing';
       currentRoom.openedFlips = new Set();
       const activePlayers = currentRoom.players.filter(p => !p.disconnected);
       io.to(socket.roomId).emit('all-submitted', {
         players: activePlayers.map(p => ({ id: p.id, name: p.name }))
       });
-    }, 300000);
+    }, timerMs);
 
-    // 全員に回答入力画面へ
+    // 全員に回答入力画面へ（timerDuration も送信してクライアントのタイマー表示に使用）
     io.to(socket.roomId).emit('topic-set', {
       topic: room.topic,
       currentRound: room.currentRound,
       totalRounds: room.totalRounds,
-      submittingStartedAt: room.submittingStartedAt
+      submittingStartedAt: room.submittingStartedAt,
+      timerDuration: timerMs
     });
 
     console.log(`お題設定: 「${room.topic}」 ルーム ${socket.roomId}`);
@@ -750,7 +760,8 @@ io.on('connection', (socket) => {
       submittedCount: room.answers.size,
       totalCount: room.players.length,
       openedFlipCount: room.openedFlips ? room.openedFlips.size : 0,
-      submittingStartedAt: room.submittingStartedAt || null
+      submittingStartedAt: room.submittingStartedAt || null,
+      timerDuration: room.timerDuration || 300000
     };
 
     socket.emit('rejoin-success', gameStateInfo);
@@ -836,13 +847,12 @@ io.on('connection', (socket) => {
       const answer = room.answers.get(socket.id);
       if (answer && !room.openedFlips.has(socket.id)) {
         room.openedFlips.add(socket.id);
-        const activePlayers = room.players.filter(p => !p.disconnected);
         io.to(roomId).emit('flip-opened', {
           playerId: socket.id,
           playerName: disconnectedPlayer.name,
           answer: answer,
           openedCount: room.openedFlips.size,
-          total: activePlayers.length
+          total: room.players.length
         });
       }
     }

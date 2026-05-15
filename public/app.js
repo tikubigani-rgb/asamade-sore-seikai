@@ -18,6 +18,7 @@ let myRoomId = null;
 let hostPlayerId = null;    // ルーム内のホストのID（ロビー用）
 let isHost = false;
 let selectedRounds = 5;
+let selectedTimerMinutes = 5;
 let totalPlayers = 0;
 let currentRoundNum = 1;
 let totalRoundsNum = 5;
@@ -35,7 +36,7 @@ let redoStack = [];
 // 描画タイマー関連
 let submitTimerInterval = null;
 let submittingStartedAt = null;
-const SUBMIT_TIMER_DURATION_MS = 300000; // 5分
+let submitTimerDurationMs = 300000; // 5分（サーバーから topic-set で上書きされる）
 
 // ======================================
 // 描画タイマー管理
@@ -54,7 +55,7 @@ function startSubmitTimer(startedAt) {
 
   function tick() {
     const elapsed = Date.now() - submittingStartedAt;
-    const remaining = SUBMIT_TIMER_DURATION_MS - elapsed;
+    const remaining = submitTimerDurationMs - elapsed;
 
     if (remaining <= 0) {
       timerVal.textContent = '時間切れ！';
@@ -103,7 +104,8 @@ function resetSubmitTimer() {
   if (timerEl) timerEl.style.display = 'none';
   if (timerCountdown) timerCountdown.style.display = 'none';
   if (timerVal) {
-    timerVal.textContent = '5:00';
+    const mins = Math.floor(submitTimerDurationMs / 60000);
+    timerVal.textContent = `${mins}:00`;
     timerVal.classList.remove('timer-warning', 'timer-expired');
   }
 }
@@ -287,6 +289,7 @@ function resetRevealScreen() {
 let canvasCtx = null;     // canvasの描画コンテキスト
 let isDrawing = false;    // 描画中かどうか
 let penSize = 12;         // 現在のペンサイズ（デフォルト：中）
+let isEraserMode = false; // 消しゴムモード
 let lastX = 0;
 let lastY = 0;
 
@@ -378,15 +381,35 @@ function initCanvas() {
   canvasCtx.strokeStyle = '#222222';
   canvasCtx.lineWidth = penSize;
 
-  // ペンサイズ切り替えボタン
+  // ペンサイズ切り替えボタン（クリック時に消しゴムモードを解除）
   document.querySelectorAll('.pen-size-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.pen-size-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      penSize = parseInt(btn.dataset.size);
+      penSize = parseInt(btn.dataset.size, 10);
       canvasCtx.lineWidth = penSize;
+      // 消しゴムモード解除
+      isEraserMode = false;
+      canvasCtx.strokeStyle = '#222222';
+      const eraserBtn = document.getElementById('btn-eraser');
+      if (eraserBtn) eraserBtn.classList.remove('active');
     });
   });
+
+  // 消しゴムボタン
+  const eraserBtn = document.getElementById('btn-eraser');
+  if (eraserBtn) {
+    eraserBtn.addEventListener('click', () => {
+      isEraserMode = !isEraserMode;
+      if (isEraserMode) {
+        eraserBtn.classList.add('active');
+        canvasCtx.strokeStyle = '#ffffff';
+      } else {
+        eraserBtn.classList.remove('active');
+        canvasCtx.strokeStyle = '#222222';
+      }
+    });
+  }
 
   // 「取り消し」ボタン
   const undoBtn = document.getElementById('btn-undo-canvas');
@@ -423,10 +446,10 @@ function initCanvas() {
     lastX = pos.x;
     lastY = pos.y;
 
-    // 点を描画（クリックのみの場合も点を打つ）
+    // 点を描画（クリックのみの場合も点を打つ。消しゴムモードは白で描画）
     canvasCtx.beginPath();
     canvasCtx.arc(lastX, lastY, canvasCtx.lineWidth / 2, 0, Math.PI * 2);
-    canvasCtx.fillStyle = '#222222';
+    canvasCtx.fillStyle = isEraserMode ? '#ffffff' : '#222222';
     canvasCtx.fill();
   });
 
@@ -458,6 +481,91 @@ function initCanvas() {
   // pointercancel（スクロールなどで描画が中断された場合）
   canvas.addEventListener('pointercancel', (e) => {
     isDrawing = false;
+  });
+
+  // ===== キーボードショートカット =====
+  document.addEventListener('keydown', (e) => {
+    // 回答入力画面がアクティブでないときはスキップ
+    const submittingScreen = document.getElementById('screen-submitting');
+    if (!submittingScreen || !submittingScreen.classList.contains('active')) return;
+
+    // IME変換中はスキップ
+    if (e.isComposing || e.keyCode === 229) return;
+
+    const key = e.key;
+
+    // Ctrl+Z (Undo)
+    if (e.ctrlKey && !e.shiftKey && key.toLowerCase() === 'z') {
+      e.preventDefault();
+      undoCanvas(canvas);
+      return;
+    }
+    // Ctrl+Shift+Z (Redo)
+    if (e.ctrlKey && e.shiftKey && key.toLowerCase() === 'z') {
+      e.preventDefault();
+      redoCanvas(canvas);
+      return;
+    }
+    // Ctrl+Enter (回答送信)
+    if (e.ctrlKey && key === 'Enter') {
+      e.preventDefault();
+      const submitBtn = document.getElementById('btn-submit-answer');
+      if (submitBtn && !submitBtn.disabled && submitBtn.offsetParent !== null) {
+        submitBtn.click();
+      }
+      return;
+    }
+
+    // Ctrl/Meta 系はここ以降不要
+    if (e.ctrlKey || e.metaKey) return;
+
+    // テキスト入力中は Q/W/E/A/S/D/Delete をスキップ
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) return;
+
+    if (!canvasCtx) return;
+
+    // ペンモードをアクティブにするヘルパー
+    const activatePen = (size) => {
+      penSize = size;
+      canvasCtx.lineWidth = size;
+      isEraserMode = false;
+      canvasCtx.strokeStyle = '#222222';
+      document.querySelectorAll('.pen-size-btn').forEach(b => b.classList.remove('active'));
+      const sizeBtn = document.querySelector(`.pen-size-btn[data-size="${size}"]`);
+      if (sizeBtn) sizeBtn.classList.add('active');
+      const eb = document.getElementById('btn-eraser');
+      if (eb) eb.classList.remove('active');
+    };
+
+    // 消しゴムモードをアクティブにするヘルパー
+    const activateEraser = (size) => {
+      penSize = size;
+      canvasCtx.lineWidth = size;
+      isEraserMode = true;
+      canvasCtx.strokeStyle = '#ffffff';
+      document.querySelectorAll('.pen-size-btn').forEach(b => b.classList.remove('active'));
+      const sizeBtn = document.querySelector(`.pen-size-btn[data-size="${size}"]`);
+      if (sizeBtn) sizeBtn.classList.add('active');
+      const eb = document.getElementById('btn-eraser');
+      if (eb) eb.classList.add('active');
+    };
+
+    const lowerKey = key.length === 1 ? key.toLowerCase() : key;
+    switch (lowerKey) {
+      case 'q': activatePen(8);    break;
+      case 'w': activatePen(12);   break;
+      case 'e': activatePen(18);   break;
+      case 'a': activateEraser(8); break;
+      case 's': activateEraser(12);break;
+      case 'd': activateEraser(18);break;
+      case 'Delete':
+        if (!isCanvasEmpty(canvas)) {
+          saveUndoState(canvas);
+          clearCanvas(canvas);
+        }
+        break;
+    }
   });
 }
 
@@ -518,11 +626,19 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ラウンドセレクター
-  document.querySelectorAll('.btn-round-select').forEach(btn => {
+  document.querySelectorAll('[data-rounds]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.btn-round-select').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('[data-rounds]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      selectedRounds = parseInt(btn.dataset.rounds);
+      selectedRounds = parseInt(btn.dataset.rounds, 10);
+    });
+  });
+
+  document.querySelectorAll('[data-timer]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-timer]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedTimerMinutes = parseInt(btn.dataset.timer, 10);
     });
   });
 
@@ -601,7 +717,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ゲームスタートボタン
   document.getElementById('btn-start-game').addEventListener('click', () => {
-    socket.emit('start-game', { totalRounds: selectedRounds });
+    socket.emit('start-game', { totalRounds: selectedRounds, timerMinutes: selectedTimerMinutes });
   });
 
   // ===== お題設定画面（変更1）=====
@@ -709,6 +825,10 @@ document.addEventListener('DOMContentLoaded', () => {
     hostPlayerId = null;
     isHost = false;
     selectedRounds = 5;
+    selectedTimerMinutes = 5;
+    submitTimerDurationMs = 300000;
+    isEraserMode = false;
+    penSize = 12;
     totalPlayers = 0;
     currentRoundNum = 1;
     totalRoundsNum = 5;
@@ -720,6 +840,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // キャンバスをリセット
     const canvas = document.getElementById('answer-canvas');
     if (canvas) clearCanvas(canvas);
+    if (canvasCtx) {
+      canvasCtx.strokeStyle = '#222222';
+      canvasCtx.lineWidth = penSize;
+    }
+    const eraserBtn = document.getElementById('btn-eraser');
+    if (eraserBtn) eraserBtn.classList.remove('active');
+    document.querySelectorAll('.pen-size-btn').forEach(b => b.classList.remove('active'));
+    const defaultPenBtn = document.querySelector('.pen-size-btn[data-size="12"]');
+    if (defaultPenBtn) defaultPenBtn.classList.add('active');
     // 回答フォームを再表示状態に戻す
     const answerForm = document.getElementById('answer-form');
     if (answerForm) answerForm.style.display = 'block';
@@ -825,10 +954,11 @@ socket.on('host-promoted', ({ message }) => {
 });
 
 // --- ゲーム開始 ---
-socket.on('game-started', ({ currentRound, totalRounds, isHost: hostFlag }) => {
+socket.on('game-started', ({ currentRound, totalRounds, isHost: hostFlag, timerDuration }) => {
   isHost = hostFlag !== undefined ? hostFlag : isHost;
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
+  if (timerDuration) submitTimerDurationMs = timerDuration;
 
   // タイマーをリセット（ホスト・参加者問わず）
   resetSubmitTimer();
@@ -862,7 +992,8 @@ socket.on('random-topic', ({ topic, char }) => {
 });
 
 // --- お題確定・回答入力開始 ---
-socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt: startedAt }) => {
+socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt: startedAt, timerDuration }) => {
+  if (timerDuration) submitTimerDurationMs = timerDuration;
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
@@ -872,6 +1003,11 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt:
     clearCanvas(canvas);
     undoStack = [];
     redoStack = [];
+    // 消しゴムモードをリセット
+    isEraserMode = false;
+    if (canvasCtx) canvasCtx.strokeStyle = '#222222';
+    const eraserBtn = document.getElementById('btn-eraser');
+    if (eraserBtn) eraserBtn.classList.remove('active');
   }
   document.getElementById('answer-form').style.display = 'block';
   document.getElementById('submitted-message').style.display = 'none';
@@ -948,15 +1084,20 @@ socket.on('flip-opened', ({ playerId, playerName, answer, openedCount, total }) 
   // 該当カードをフリップ
   const card = document.getElementById('card-' + playerId);
   if (card) {
-    // カードの裏面に回答をセット
+    // カードの裏面に回答＋プレイヤー名をセット
     const back = card.querySelector('.flip-card-back');
+    let contentHtml;
     if (answer && answer.startsWith('data:image/')) {
-      back.innerHTML = `<img src="${answer}" class="answer-image" alt="回答">`;
+      contentHtml = `<img src="${answer}" class="answer-image" alt="回答">`;
     } else if (answer) {
-      back.innerHTML = `<span class="answer-text">${escapeHTML(answer)}</span>`;
+      contentHtml = `<span class="answer-text">${escapeHTML(answer)}</span>`;
     } else {
-      back.innerHTML = `<span class="answer-text" style="color:var(--color-gray);font-size:0.9rem;">（未回答）</span>`;
+      contentHtml = `<span class="answer-text" style="color:var(--color-gray);font-size:0.9rem;">（未回答）</span>`;
     }
+    back.innerHTML = `
+      <div class="flip-back-content">${contentHtml}</div>
+      <div class="flip-back-name">${escapeHTML(playerName)}</div>
+    `;
     // フリップアニメーション
     setTimeout(() => {
       card.querySelector('.flip-card-inner').classList.add('flipped');
@@ -1108,7 +1249,11 @@ socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }
     showScreen('screen-topic');
   }
 
-  // 変更3: キャンバスをリセット＆送信ボタンを再有効化
+  // キャンバスをリセット＆消しゴムモードリセット＆送信ボタンを再有効化
+  isEraserMode = false;
+  if (canvasCtx) canvasCtx.strokeStyle = '#222222';
+  const eraserBtnNR = document.getElementById('btn-eraser');
+  if (eraserBtnNR) eraserBtnNR.classList.remove('active');
   const canvas = document.getElementById('answer-canvas');
   if (canvas) {
     clearCanvas(canvas);
@@ -1137,9 +1282,10 @@ socket.on('game-ended', ({ finalScores }) => {
 });
 
 // --- 再入室成功 ---
-socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount, submittingStartedAt: startedAt }) => {
+socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount, submittingStartedAt: startedAt, timerDuration }) => {
   hideReconnectOverlay();
   isRejoinPending = false;
+  stopSubmitTimer();
   myPlayerId = playerId;
   myRoomId = roomId;
   hostPlayerId = hostId;
@@ -1147,6 +1293,7 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
   totalPlayers = players.length;
+  if (timerDuration) submitTimerDurationMs = timerDuration;
 
   setHashRoomCode(roomId);
   showToast('再入室しました！', 3000);
