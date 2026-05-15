@@ -670,6 +670,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('answer-form').style.display = 'none';
     document.getElementById('submitted-message').style.display = 'block';
     btn.disabled = true;
+    btn.style.display = 'none';
   });
 
   // ===== 回答公開画面 =====
@@ -876,6 +877,7 @@ socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt:
   if (submitBtn) {
     submitBtn.disabled = false;
     submitBtn.style.opacity = '';
+    submitBtn.style.display = '';
   }
 
   // お題・ラウンド表示（回答入力画面）
@@ -1198,12 +1200,12 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
       document.getElementById('answer-form').style.display = 'none';
       document.getElementById('submitted-message').style.display = 'block';
       const submitBtn = document.getElementById('btn-submit-answer');
-      if (submitBtn) submitBtn.disabled = true;
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.style.display = 'none'; }
     } else {
       document.getElementById('answer-form').style.display = 'block';
       document.getElementById('submitted-message').style.display = 'none';
       const submitBtn = document.getElementById('btn-submit-answer');
-      if (submitBtn) submitBtn.disabled = false;
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.style.display = ''; }
     }
     showScreen('screen-submitting');
 

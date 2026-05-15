@@ -439,13 +439,6 @@ textarea {
   box-shadow: var(--shadow-soft);
 }
 
-/* ===================================
-   回答入力画面
-=================================== */
-.answer-progress {
-  margin-top: 24px;
-}
-
 .progress-bar-container {
   height: 8px;
   background: var(--color-border);
@@ -859,6 +852,120 @@ textarea {
 }
 
 /* ===================================
+   回答入力画面 新レイアウト
+=================================== */
+
+/* 外側：キャンバスエリア＋右パネルの横並び */
+.submitting-wrapper {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.submitting-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* キャンバス＋左ツールの横並び */
+.canvas-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+}
+
+/* 左ツールパネル */
+.canvas-left-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 28px;
+}
+
+/* キャンバス中央エリア */
+.canvas-center {
+  flex: 1;
+  min-width: 0;
+  max-width: 1280px;
+}
+
+/* 右パネル（決定ボタン＋進捗） */
+.canvas-right-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  width: 90px;
+  padding-top: 28px;
+}
+
+.canvas-right-panel #btn-submit-answer {
+  width: 100%;
+  padding: 14px 8px;
+  font-size: 1.1rem;
+}
+
+/* 回答進捗（右パネル内） */
+.answer-progress-side {
+  text-align: center;
+  width: 100%;
+}
+
+.answer-progress-side .progress-bar-container {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.answer-progress-side .progress-text {
+  font-size: 0.85rem;
+  color: var(--color-gray);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* アイコンボタン */
+.tool-btn {
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-white);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  color: var(--color-gray);
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tool-btn:hover {
+  background: var(--color-light-gray);
+  border-color: #bbb;
+  color: var(--color-text);
+}
+
+.tool-btn svg {
+  display: block;
+}
+
+/* ツールパネル区切り線 */
+.tool-divider {
+  width: 32px;
+  height: 2px;
+  background: var(--color-border);
+  border-radius: 1px;
+  margin: 2px 0;
+}
+
+/* ===================================
    変更3: キャンバス手書きUI
 =================================== */
 
@@ -872,24 +979,14 @@ textarea {
   display: block;
   margin: 0 auto;
   width: 100%;
-  max-width: 1600px;
+  max-width: 1280px;
   height: auto;
 }
 
 /* 回答入力・回答公開画面のscreen-innerを幅広に */
 #screen-submitting .screen-inner,
 #screen-revealing .screen-inner {
-  max-width: 1500px;
-}
-
-/* フリップカードエリア全体 */
-.flip-card-area {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  padding: 8px 0;
-  width: 100%;
+  max-width: 1460px;
 }
 
 /* ラベル */
@@ -900,36 +997,18 @@ textarea {
   text-align: center;
 }
 
-/* ツールバー（消す＋ペンサイズ） */
-.flip-card-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  max-width: 1600px;
-  gap: 12px;
-}
-
-/* 消すボタン */
-#btn-clear-canvas {
-  flex-shrink: 0;
-  width: auto;
-  min-height: 40px;
-  padding: 8px 18px;
-  font-size: 0.9rem;
-}
-
 /* ペンサイズ選択 */
 .pen-size-selector {
   display: flex;
+  flex-direction: column;
   gap: 6px;
   align-items: center;
 }
 
 .pen-size-btn {
-  min-width: 40px;
+  width: 48px;
   height: 40px;
-  padding: 0 10px;
+  padding: 0;
   border: 2px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-white);
