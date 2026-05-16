@@ -405,6 +405,19 @@ io.on('connection', (socket) => {
         }
       }
 
+      // revealing中に再接続したプレイヤーが未公開なら自動でフリップ公開
+      if (room.gameState === 'revealing' && !room.openedFlips.has(socket.id)) {
+        const answer = room.answers.get(socket.id) || null;
+        room.openedFlips.add(socket.id);
+        io.to(upperRoomId).emit('flip-opened', {
+          playerId: socket.id,
+          playerName: trimmedName,
+          answer: answer,
+          openedCount: room.openedFlips.size,
+          total: room.players.length
+        });
+      }
+
       socket.to(upperRoomId).emit('player-rejoined', {
         playerName: trimmedName,
         players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
@@ -868,6 +881,21 @@ io.on('connection', (socket) => {
         });
         console.log(`rejoin後 全員提出完了: ルーム ${upperRoomId}`);
       }
+    }
+
+    // revealing中に再接続したプレイヤーが未公開なら自動でフリップ公開
+    // （回答なしで再接続した場合も openedFlips に含め、openedCount >= total が達成できるようにする）
+    if (room.gameState === 'revealing' && !room.openedFlips.has(socket.id)) {
+      const answer = room.answers.get(socket.id) || null;
+      room.openedFlips.add(socket.id);
+      io.to(upperRoomId).emit('flip-opened', {
+        playerId: socket.id,
+        playerName: trimmedName,
+        answer: answer,
+        openedCount: room.openedFlips.size,
+        total: room.players.length
+      });
+      console.log(`rejoin中 自動フリップ公開: ${trimmedName} ルーム ${upperRoomId}`);
     }
 
     // 既存プレイヤーに通知
