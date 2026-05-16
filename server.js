@@ -1,4 +1,4 @@
-// 朝までそれ正解 - サーバー
+﻿// 朝までそれ正解 - サーバー
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -268,6 +268,20 @@ function createUniqueRoomId() {
 const disconnectSessions = new Map();
 const DISCONNECT_TIMEOUT_MS = 30000; // 30秒間セッション保持
 
+function autoOpenAnswerlessFlips(room, roomId, io) {
+  room.players.filter(p => !room.answers.has(p.id) && !room.openedFlips.has(p.id)).forEach(player => {
+    room.openedFlips.add(player.id);
+    io.to(roomId).emit('flip-opened', {
+      playerId: player.id,
+      playerName: player.name,
+      answer: null,
+      openedCount: room.openedFlips.size,
+      total: room.players.length
+    });
+    console.log(`回答なし自動フリップ公開: ${player.name} ルーム ${roomId}`);
+  });
+}
+
 // Socket.io接続処理
 io.on('connection', (socket) => {
   console.log(`プレイヤー接続: ${socket.id}`);
@@ -402,6 +416,7 @@ io.on('connection', (socket) => {
           io.to(upperRoomId).emit('all-submitted', {
             players: activePlayers.map(p => ({ id: p.id, name: p.name }))
           });
+          autoOpenAnswerlessFlips(room, upperRoomId, io);
         }
       }
 
@@ -558,6 +573,7 @@ io.on('connection', (socket) => {
       io.to(socket.roomId).emit('all-submitted', {
         players: activePlayers.map(p => ({ id: p.id, name: p.name }))
       });
+      autoOpenAnswerlessFlips(currentRoom, socket.roomId, io);
     }, timerMs);
 
     // 全員に回答入力画面へ（timerDuration も送信してクライアントのタイマー表示に使用）
@@ -633,6 +649,7 @@ io.on('connection', (socket) => {
       io.to(resolvedRoomId).emit('all-submitted', {
         players: activePlayers.map(p => ({ id: p.id, name: p.name }))
       });
+      autoOpenAnswerlessFlips(room, resolvedRoomId, io);
     }
 
     console.log(`回答受付: ${submitted}/${total} ルーム ${resolvedRoomId}`);
@@ -879,6 +896,7 @@ io.on('connection', (socket) => {
         io.to(upperRoomId).emit('all-submitted', {
           players: activePlayers.map(p => ({ id: p.id, name: p.name }))
         });
+        autoOpenAnswerlessFlips(room, upperRoomId, io);
         console.log(`rejoin後 全員提出完了: ルーム ${upperRoomId}`);
       }
     }
@@ -953,6 +971,7 @@ io.on('connection', (socket) => {
         io.to(roomId).emit('all-submitted', {
           players: room.players.filter(p => !p.disconnected).map(p => ({ id: p.id, name: p.name }))
         });
+        autoOpenAnswerlessFlips(room, roomId, io);
       }
     }
 
@@ -1028,6 +1047,7 @@ io.on('connection', (socket) => {
           io.to(roomId).emit('all-submitted', {
             players: activePlayers.map(p => ({ id: p.id, name: p.name }))
           });
+          autoOpenAnswerlessFlips(currentRoom, roomId, io);
         }
       }
     }, DISCONNECT_TIMEOUT_MS);
