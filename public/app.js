@@ -679,29 +679,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') document.getElementById('btn-join-room').click();
   });
 
-  // 再入室ボタン
-  document.getElementById('btn-rejoin-room').addEventListener('click', () => {
-    const name = (document.getElementById('input-name').value || '').trim();
-    const code = (document.getElementById('input-rejoin-code').value || '').trim().toUpperCase();
-    if (!name) {
-      showToast('名前を入力してください');
-      document.getElementById('input-name').focus();
-      return;
-    }
-    if (!code || code.length !== 6) {
-      showToast('6文字のルームコードを入力してください');
-      document.getElementById('input-rejoin-code').focus();
-      return;
-    }
-    savePlayerName(name);
-    socket.emit('rejoin-room', { roomId: code, playerName: name });
-  });
-
-  // Enterキーで再入室（再入室コード入力欄）
-  document.getElementById('input-rejoin-code').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('btn-rejoin-room').click();
-  });
-
   // ===== ロビー画面 =====
 
   // コードコピーボタン

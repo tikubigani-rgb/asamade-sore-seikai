@@ -19,31 +19,32 @@
         <p class="game-subtitle">みんなで答えを合わせよう！</p>
       </div>
       <div class="form-area">
+
+        <!-- 名前入力 -->
         <div class="input-group">
           <label for="input-name">あなたの名前</label>
           <input type="text" id="input-name" placeholder="名前を入力" maxlength="20" autocomplete="off">
         </div>
-        <button class="btn btn-primary btn-large" id="btn-create-room">
-          ルームを作る
-        </button>
-        <div class="divider"><span>または</span></div>
-        <div class="input-group">
-          <label for="input-room-code">ルームコード</label>
-          <input type="text" id="input-room-code" placeholder="6文字のコード" maxlength="6" autocomplete="off" style="text-transform:uppercase;">
-        </div>
-        <button class="btn btn-secondary btn-large" id="btn-join-room">
-          ルームに参加
-        </button>
-        <div class="divider"><span>または</span></div>
-        <div class="rejoin-section">
-          <p class="rejoin-label">サーバーエラーで退出した場合はこちら</p>
-          <div class="input-group">
-            <label for="input-rejoin-code">再入室するルームコード</label>
-            <input type="text" id="input-rejoin-code" placeholder="6文字のコード" maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+
+        <!-- 2カラム -->
+        <div class="home-two-col">
+
+          <!-- 左：ルームを作る -->
+          <div class="home-col">
+            <button class="btn btn-primary btn-large" id="btn-create-room">
+              ルームを作る
+            </button>
           </div>
-          <button class="btn btn-outline btn-large" id="btn-rejoin-room">
-            途中から再入室
-          </button>
+
+          <!-- 右：ルームに参加（ボタンが上、コード入力が下） -->
+          <div class="home-col">
+            <button class="btn btn-secondary btn-large" id="btn-join-room">
+              ルームに参加
+            </button>
+            <input type="text" id="input-room-code" placeholder="6文字のコード"
+                   maxlength="6" autocomplete="off" style="text-transform:uppercase;">
+          </div>
+
         </div>
       </div>
     </div>

@@ -219,6 +219,23 @@ textarea {
 }
 
 /* ===================================
+   ホーム画面 手書き風ボーダー
+=================================== */
+.home-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.home-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+
+/* ===================================
    再入室セクション
 =================================== */
 .rejoin-section {
