@@ -12,6 +12,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST']
   }
 });
+let lastActivityAt = Date.now();
 
 // ポート設定（Render対応）
 const PORT = process.env.PORT || 3000;
@@ -283,6 +284,11 @@ function autoOpenAnswerlessFlips(room, roomId, io) {
 }
 
 // Socket.io接続処理
+io.use((socket, next) => {
+  socket.onAny(() => { lastActivityAt = Date.now(); });
+  next();
+});
+
 io.on('connection', (socket) => {
   console.log(`プレイヤー接続: ${socket.id}`);
 
@@ -1078,11 +1084,16 @@ const SELF_PING_URL =
 
 if (SELF_PING_URL) {
   setInterval(() => {
-    fetch(SELF_PING_URL + '/ping')
-      .then(() => console.log('self-ping OK'))
-      .catch(err => console.error('self-ping failed:', err.message));
+    const idleMs = Date.now() - lastActivityAt;
+    if (idleMs < 30 * 60 * 1000) {
+      fetch(SELF_PING_URL + '/ping')
+        .then(() => console.log('self-ping OK'))
+        .catch(err => console.error('self-ping failed:', err.message));
+    } else {
+      console.log(`非アクティブ ${Math.floor(idleMs / 60000)} 分 → ping スキップ（スリープ許可）`);
+    }
   }, 14 * 60 * 1000);
-  console.log(`self-ping 設定: ${SELF_PING_URL}/ping (14分間隔)`);
+  console.log(`self-ping 設定: ${SELF_PING_URL}/ping (14分間隔、30分非アクティブで停止)`);
 }
 
 // サーバー起動
