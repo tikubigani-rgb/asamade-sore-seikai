@@ -383,6 +383,10 @@ io.on('connection', (socket) => {
           socket.emit('error', { message: 'フリップ公開中は参加できません。次のラウンドをお待ちください' });
           return;
         }
+        if (room.players.length >= 16) {
+          socket.emit('error', { message: 'このルームは満員です（最大16人）' });
+          return;
+        }
         room.players.push({ id: socket.id, name: trimmedName, score: 0 });
       }
 
@@ -456,6 +460,11 @@ io.on('connection', (socket) => {
     );
     if (existingName) {
       socket.emit('error', { message: 'その名前はすでに使われています' });
+      return;
+    }
+
+    if (room.players.length >= 16) {
+      socket.emit('error', { message: 'このルームは満員です（最大16人）' });
       return;
     }
 
