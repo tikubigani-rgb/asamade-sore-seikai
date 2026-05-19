@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://asamade-sore-seikai.onrender.com/sitemap.xml
