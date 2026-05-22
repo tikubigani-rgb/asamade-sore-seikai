@@ -377,6 +377,7 @@ io.on('connection', (socket) => {
         }
         existingPlayer.id = socket.id;
         existingPlayer.disconnected = false;
+        existingPlayer.disconnectedAt = null;
       } else {
         // revealing中は新規参加を拒否（フリップ総数が狂い進行不能になるため）
         if (room.gameState === 'revealing') {
@@ -424,7 +425,7 @@ io.on('connection', (socket) => {
           room.gameState = 'revealing';
           room.openedFlips = new Set();
           io.to(upperRoomId).emit('all-submitted', {
-            players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+            players: room.players.map(p => ({ id: p.id, name: p.name }))
           });
           autoOpenAnswerlessFlips(room, upperRoomId, io);
         }
@@ -584,9 +585,8 @@ io.on('connection', (socket) => {
       console.log(`回答タイムアウト（${timerMs / 60000}分）→ revealing へ強制移行: ルーム ${socket.roomId}`);
       currentRoom.gameState = 'revealing';
       currentRoom.openedFlips = new Set();
-      const activePlayers = currentRoom.players.filter(p => !p.disconnected);
       io.to(socket.roomId).emit('all-submitted', {
-        players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+        players: currentRoom.players.map(p => ({ id: p.id, name: p.name }))
       });
       autoOpenAnswerlessFlips(currentRoom, socket.roomId, io);
     }, timerMs);
@@ -645,7 +645,12 @@ io.on('connection', (socket) => {
 
     const submitted = room.answers.size;
     const total = room.players.length;
-    const activePlayers = room.players.filter(p => !p.disconnected);
+    // 切断後3秒以内は「アクティブ」扱いで待機（一時切断による誤移行を防止）
+    const now = Date.now();
+    const DISCONNECT_GRACE_MS = 3000;
+    const activePlayers = room.players.filter(p =>
+      !p.disconnected || (p.disconnectedAt && now - p.disconnectedAt < DISCONNECT_GRACE_MS)
+    );
     const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
 
     // 全員に回答数を通知
@@ -660,9 +665,9 @@ io.on('connection', (socket) => {
       }
       room.gameState = 'revealing';
       room.openedFlips = new Set(); // フリップ公開済みをリセット
-      // 全員に通知（アクティブプレイヤー情報付き）
+      // 全員に通知（切断中も含む全プレイヤー情報付き）
       io.to(resolvedRoomId).emit('all-submitted', {
-        players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+        players: room.players.map(p => ({ id: p.id, name: p.name }))
       });
       autoOpenAnswerlessFlips(room, resolvedRoomId, io);
     }
@@ -861,6 +866,7 @@ io.on('connection', (socket) => {
       // 既存プレイヤーのソケットIDを更新（再接続扱い）＆切断フラグ解除
       existingPlayer.id = socket.id;
       existingPlayer.disconnected = false;
+      existingPlayer.disconnectedAt = null;
     } else {
       // 新規として追加（途中参加）
       room.players.push({
@@ -909,7 +915,7 @@ io.on('connection', (socket) => {
         room.gameState = 'revealing';
         room.openedFlips = new Set();
         io.to(upperRoomId).emit('all-submitted', {
-          players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+          players: room.players.map(p => ({ id: p.id, name: p.name }))
         });
         autoOpenAnswerlessFlips(room, upperRoomId, io);
         console.log(`rejoin後 全員提出完了: ルーム ${upperRoomId}`);
@@ -963,6 +969,7 @@ io.on('connection', (socket) => {
 
     // プレイヤーを「切断中」フラグにする（リストからは削除しない）
     disconnectedPlayer.disconnected = true;
+    disconnectedPlayer.disconnectedAt = Date.now(); // 猶予期間チェック用
 
     // 他プレイヤーに切断を通知（ゲームは継続）
     io.to(roomId).emit('player-disconnected', {
@@ -971,23 +978,37 @@ io.on('connection', (socket) => {
     });
 
     // submitting フェーズで切断プレイヤーをスキップ（デッドロック防止）
+    // 一時的な切断による誤移行を防ぐため3秒後にチェック
     if (room.gameState === 'submitting') {
-      const activePlayers = room.players.filter(p => !p.disconnected);
-      const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
       const total = room.players.length;
       const submitted = room.answers.size;
-
       io.to(roomId).emit('answer-count', { submitted, total });
 
-      // アクティブプレイヤー全員が回答済みなら次のフェーズへ
-      if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
-        room.gameState = 'revealing';
-        room.openedFlips = new Set();
-        io.to(roomId).emit('all-submitted', {
-          players: room.players.filter(p => !p.disconnected).map(p => ({ id: p.id, name: p.name }))
-        });
-        autoOpenAnswerlessFlips(room, roomId, io);
-      }
+      setTimeout(() => {
+        const currentRoom = rooms.get(roomId);
+        if (!currentRoom || currentRoom.gameState !== 'submitting') return;
+        // 再接続済みならスキップ（切断フラグが解除されている場合）
+        const stillDisconnected = currentRoom.players.find(
+          p => p.name === disconnectedPlayer.name && p.disconnected
+        );
+        if (!stillDisconnected) return;
+
+        const activePlayers = currentRoom.players.filter(p => !p.disconnected);
+        const activeSubmitted = activePlayers.filter(p => currentRoom.answers.has(p.id)).length;
+
+        if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
+          if (currentRoom.submitTimeout5min) {
+            clearTimeout(currentRoom.submitTimeout5min);
+            currentRoom.submitTimeout5min = null;
+          }
+          currentRoom.gameState = 'revealing';
+          currentRoom.openedFlips = new Set();
+          io.to(roomId).emit('all-submitted', {
+            players: currentRoom.players.map(p => ({ id: p.id, name: p.name }))
+          });
+          autoOpenAnswerlessFlips(currentRoom, roomId, io);
+        }
+      }, 3000);
     }
 
     // revealing フェーズで未公開の場合、自動でフリップ公開して進行を継続
@@ -1057,10 +1078,14 @@ io.on('connection', (socket) => {
         io.to(roomId).emit('answer-count', { submitted, total });
 
         if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
+          if (currentRoom.submitTimeout5min) {
+            clearTimeout(currentRoom.submitTimeout5min);
+            currentRoom.submitTimeout5min = null;
+          }
           currentRoom.gameState = 'revealing';
           currentRoom.openedFlips = new Set();
           io.to(roomId).emit('all-submitted', {
-            players: activePlayers.map(p => ({ id: p.id, name: p.name }))
+            players: currentRoom.players.map(p => ({ id: p.id, name: p.name }))
           });
           autoOpenAnswerlessFlips(currentRoom, roomId, io);
         }
