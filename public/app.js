@@ -5,6 +5,7 @@
 // 初期化
 // ======================================
 const socket = io({
+  transports: ['websocket'],  // polling を使わず最初から WebSocket（Railway 対策）
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,

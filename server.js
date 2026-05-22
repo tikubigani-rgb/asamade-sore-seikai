@@ -10,7 +10,10 @@ const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
-  }
+  },
+  transports: ['websocket'],  // Railway プロキシの polling 切断問題を回避
+  pingInterval: 10000,        // 10秒ごとに生存確認（Railway のアイドルタイムアウト対策）
+  pingTimeout: 5000           // 5秒以内に応答なければ切断と判定して即再接続
 });
 let lastActivityAt = Date.now();
 
