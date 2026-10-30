@@ -272,18 +272,173 @@ function createUniqueRoomId() {
 const disconnectSessions = new Map();
 const DISCONNECT_TIMEOUT_MS = 30000; // 30秒間セッション保持
 
+// 回答なし・切断中のプレイヤーのフリップを自動公開（本人が開けないため進行が止まるのを防ぐ）
 function autoOpenAnswerlessFlips(room, roomId, io) {
-  room.players.filter(p => !room.answers.has(p.id) && !room.openedFlips.has(p.id)).forEach(player => {
+  room.players.filter(p => !room.openedFlips.has(p.id) && (!room.answers.has(p.id) || p.disconnected)).forEach(player => {
     room.openedFlips.add(player.id);
     io.to(roomId).emit('flip-opened', {
       playerId: player.id,
       playerName: player.name,
-      answer: null,
+      answer: room.answers.get(player.id) || null,
       openedCount: room.openedFlips.size,
       total: room.players.length
     });
-    console.log(`回答なし自動フリップ公開: ${player.name} ルーム ${roomId}`);
+    console.log(`自動フリップ公開: ${player.name} ルーム ${roomId}`);
   });
+}
+
+// クライアントから受け取った識別トークンを検証（不正な値は null）
+function normalizeToken(token) {
+  return typeof token === 'string' && token.length > 0 && token.length <= 64 ? token : null;
+}
+
+// 回答済みプレイヤー数（再接続直後にまだプレイヤーと紐付いていない回答は数えない）
+function countSubmitted(room) {
+  return room.players.filter(p => room.answers.has(p.id)).length;
+}
+
+// submitting → revealing へ移行（全経路共通）
+function startRevealing(room, roomId) {
+  if (room.gameState !== 'submitting') return;
+  if (room.submitTimeout5min) {
+    clearTimeout(room.submitTimeout5min);
+    room.submitTimeout5min = null;
+  }
+  room.gameState = 'revealing';
+  room.openedFlips = new Set();
+  // 全員に通知（切断中も含む全プレイヤー情報付き）
+  io.to(roomId).emit('all-submitted', {
+    players: room.players.map(p => ({ id: p.id, name: p.name }))
+  });
+  autoOpenAnswerlessFlips(room, roomId, io);
+}
+
+// アクティブプレイヤー全員が回答済みなら revealing へ移行
+// 切断後 DISCONNECT_GRACE_MS 以内は「アクティブ」扱いで待機（一時切断による誤移行を防止）
+const DISCONNECT_GRACE_MS = 3000;
+function checkAllSubmitted(room, roomId) {
+  if (room.gameState !== 'submitting') return;
+  const now = Date.now();
+  const activePlayers = room.players.filter(p =>
+    !p.disconnected || (p.disconnectedAt && now - p.disconnectedAt < DISCONNECT_GRACE_MS)
+  );
+  const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
+  if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
+    startRevealing(room, roomId);
+  }
+}
+
+// 公開済みフリップの一覧（再入室したクライアントの画面復元用）
+function getOpenedFlips(room) {
+  return room.players
+    .filter(p => room.openedFlips.has(p.id))
+    .map(p => ({ playerId: p.id, playerName: p.name, answer: room.answers.get(p.id) || null }));
+}
+
+// ゲーム進行中のルームへ再入室（join-room フォールバックと rejoin-room の共通処理）
+// clientToken: ブラウザごとの識別子。接続中のプレイヤーを同名の別人が乗っ取るのを防ぐ
+function rejoinGame(socket, room, roomId, trimmedName, clientToken, errorEvent) {
+  const existingPlayer = room.players.find(p => p.name === trimmedName);
+
+  // 切断中でも本人（同じブラウザ）以外は同名で引き継げないようにする
+  if (existingPlayer && (!clientToken || existingPlayer.token !== clientToken)) {
+    socket.emit(errorEvent, { message: 'その名前はすでに使われています' });
+    return false;
+  }
+
+  if (existingPlayer) {
+    // 切断セッションのタイムアウトをキャンセル
+    const sessionKey = trimmedName + ':' + roomId;
+    if (disconnectSessions.has(sessionKey)) {
+      clearTimeout(disconnectSessions.get(sessionKey).timer);
+      disconnectSessions.delete(sessionKey);
+    }
+
+    const oldId = existingPlayer.id;
+    if (oldId !== socket.id) {
+      // 古いIDの回答を新しいIDに付け替える
+      // （再接続直後に新しいIDで回答が先に届いていた場合はそちらが最新なので優先）
+      if (room.answers.has(oldId)) {
+        if (!room.answers.has(socket.id)) room.answers.set(socket.id, room.answers.get(oldId));
+        room.answers.delete(oldId);
+      }
+      if (room.openedFlips.has(oldId)) {
+        room.openedFlips.delete(oldId);
+        room.openedFlips.add(socket.id);
+      }
+      if (room.hostId === oldId) {
+        room.hostId = socket.id;
+      }
+      // 切断検知前の古い接続が残っていればルームから外す（古い接続の切断処理が新しい接続を巻き込まないように）
+      const oldSocket = io.sockets.sockets.get(oldId);
+      if (oldSocket) {
+        oldSocket.leave(roomId);
+        oldSocket.roomId = null;
+      }
+      // 他の参加者の画面（フリップカード等）を新しいIDに付け替えてもらう
+      io.to(roomId).emit('player-id-changed', { oldId, newId: socket.id });
+    }
+    existingPlayer.id = socket.id;
+    existingPlayer.disconnected = false;
+    existingPlayer.disconnectedAt = null;
+  } else {
+    if (room.players.length >= 16) {
+      socket.emit(errorEvent, { message: 'このルームは満員です（最大16人）' });
+      return false;
+    }
+    room.players.push({ id: socket.id, name: trimmedName, score: 0, token: clientToken || null });
+  }
+
+  socket.join(roomId);
+  socket.roomId = roomId;
+
+  socket.emit('rejoin-success', {
+    roomId,
+    playerId: socket.id,
+    hostId: room.hostId,
+    isHost: room.hostId === socket.id,
+    gameState: room.gameState,
+    currentRound: room.currentRound,
+    totalRounds: room.totalRounds,
+    topic: room.topic,
+    players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
+    hasSubmitted: room.answers.has(socket.id),
+    submittedCount: countSubmitted(room),
+    totalCount: room.players.length,
+    openedFlipCount: room.openedFlips.size,
+    openedFlips: room.gameState === 'revealing' ? getOpenedFlips(room) : [],
+    correctAnswers: Array.from(room.correctAnswers),
+    submittingStartedAt: room.submittingStartedAt || null,
+    timerDuration: room.timerDuration || 300000
+  });
+
+  // 回答の付け替えで回答数が変わることがあるため全員に送り直す
+  if (room.gameState === 'submitting') {
+    io.to(roomId).emit('answer-count', { submitted: countSubmitted(room), total: room.players.length });
+  }
+
+  // submitting状態でかつ全アクティブプレイヤーが回答済みなら revealing へ
+  checkAllSubmitted(room, roomId);
+
+  // revealing中に再接続したプレイヤーが未公開なら自動でフリップ公開
+  // （回答なしで再接続した場合も openedFlips に含め、openedCount >= total が達成できるようにする）
+  if (room.gameState === 'revealing' && !room.openedFlips.has(socket.id)) {
+    room.openedFlips.add(socket.id);
+    io.to(roomId).emit('flip-opened', {
+      playerId: socket.id,
+      playerName: trimmedName,
+      answer: room.answers.get(socket.id) || null,
+      openedCount: room.openedFlips.size,
+      total: room.players.length
+    });
+  }
+
+  socket.to(roomId).emit('player-rejoined', {
+    playerName: trimmedName,
+    players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
+    hostId: room.hostId
+  });
+  return true;
 }
 
 // Socket.io接続処理
@@ -296,7 +451,7 @@ io.on('connection', (socket) => {
   console.log(`プレイヤー接続: ${socket.id}`);
 
   // --- ルーム作成 ---
-  socket.on('create-room', ({ playerName }) => {
+  socket.on('create-room', ({ playerName, clientToken }) => {
     if (!playerName || typeof playerName !== 'string' || playerName.trim() === '') {
       socket.emit('error', { message: 'プレイヤー名を入力してください' });
       return;
@@ -306,7 +461,8 @@ io.on('connection', (socket) => {
     const player = {
       id: socket.id,
       name: playerName.trim().substring(0, 20), // 最大20文字
-      score: 0
+      score: 0,
+      token: normalizeToken(clientToken)
     };
 
     // ルームState初期化
@@ -334,7 +490,7 @@ io.on('connection', (socket) => {
   });
 
   // --- ルーム参加 ---
-  socket.on('join-room', ({ roomId, playerName }) => {
+  socket.on('join-room', ({ roomId, playerName, clientToken }) => {
     if (!playerName || typeof playerName !== 'string' || playerName.trim() === '') {
       socket.emit('error', { message: 'プレイヤー名を入力してください' });
       return;
@@ -356,112 +512,30 @@ io.on('connection', (socket) => {
       }
 
       const trimmedName = playerName.trim().substring(0, 20);
-      const existingPlayer = room.players.find(p => p.name === trimmedName);
-      let hasSubmitted = false;
-
-      if (existingPlayer) {
-        const sessionKey = trimmedName + ':' + upperRoomId;
-        if (disconnectSessions.has(sessionKey)) {
-          clearTimeout(disconnectSessions.get(sessionKey).timer);
-          disconnectSessions.delete(sessionKey);
-        }
-        hasSubmitted = room.answers.has(existingPlayer.id);
-        if (hasSubmitted) {
-          const existingAnswer = room.answers.get(existingPlayer.id);
-          room.answers.delete(existingPlayer.id);
-          room.answers.set(socket.id, existingAnswer);
-        }
-        if (room.openedFlips && room.openedFlips.has(existingPlayer.id)) {
-          room.openedFlips.delete(existingPlayer.id);
-          room.openedFlips.add(socket.id);
-        }
-        if (room.hostId === existingPlayer.id) {
-          room.hostId = socket.id;
-        }
-        existingPlayer.id = socket.id;
-        existingPlayer.disconnected = false;
-        existingPlayer.disconnectedAt = null;
-      } else {
-        // revealing中は新規参加を拒否（フリップ総数が狂い進行不能になるため）
-        if (room.gameState === 'revealing') {
-          socket.emit('error', { message: 'フリップ公開中は参加できません。次のラウンドをお待ちください' });
-          return;
-        }
-        if (room.players.length >= 16) {
-          socket.emit('error', { message: 'このルームは満員です（最大16人）' });
-          return;
-        }
-        room.players.push({ id: socket.id, name: trimmedName, score: 0 });
+      // revealing中は新規参加を拒否（次のラウンドから参加してもらう）
+      if (room.gameState === 'revealing' && !room.players.some(p => p.name === trimmedName)) {
+        socket.emit('error', { message: 'フリップ公開中は参加できません。次のラウンドをお待ちください' });
+        return;
       }
 
-      socket.join(upperRoomId);
-      socket.roomId = upperRoomId;
-
-      const isRejoinHost = room.hostId === socket.id;
-      const gameStateInfo = {
-        roomId: upperRoomId,
-        playerId: socket.id,
-        hostId: room.hostId,
-        isHost: isRejoinHost,
-        gameState: room.gameState,
-        currentRound: room.currentRound,
-        totalRounds: room.totalRounds,
-        topic: room.topic,
-        players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
-        hasSubmitted: hasSubmitted,
-        submittedCount: room.answers.size,
-        totalCount: room.players.length,
-        openedFlipCount: room.openedFlips ? room.openedFlips.size : 0,
-        submittingStartedAt: room.submittingStartedAt || null,
-        timerDuration: room.timerDuration || 300000
-      };
-      socket.emit('rejoin-success', gameStateInfo);
-
-      if (room.gameState === 'submitting') {
-        const activePlayers = room.players.filter(p => !p.disconnected);
-        const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
-        if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
-          if (room.submitTimeout5min) {
-            clearTimeout(room.submitTimeout5min);
-            room.submitTimeout5min = null;
-          }
-          room.gameState = 'revealing';
-          room.openedFlips = new Set();
-          io.to(upperRoomId).emit('all-submitted', {
-            players: room.players.map(p => ({ id: p.id, name: p.name }))
-          });
-          autoOpenAnswerlessFlips(room, upperRoomId, io);
-        }
+      if (rejoinGame(socket, room, upperRoomId, trimmedName, normalizeToken(clientToken), 'error')) {
+        console.log(`プレイヤー再参加(join-room fallback): ${trimmedName} → ルーム ${upperRoomId} (状態: ${room.gameState})`);
       }
-
-      // revealing中に再接続したプレイヤーが未公開なら自動でフリップ公開
-      if (room.gameState === 'revealing' && !room.openedFlips.has(socket.id)) {
-        const answer = room.answers.get(socket.id) || null;
-        room.openedFlips.add(socket.id);
-        io.to(upperRoomId).emit('flip-opened', {
-          playerId: socket.id,
-          playerName: trimmedName,
-          answer: answer,
-          openedCount: room.openedFlips.size,
-          total: room.players.length
-        });
-      }
-
-      socket.to(upperRoomId).emit('player-rejoined', {
-        playerName: trimmedName,
-        players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
-        hostId: room.hostId
-      });
-
-      console.log(`プレイヤー再参加(join-room fallback): ${playerName} → ルーム ${upperRoomId} (状態: ${room.gameState})`);
       return;
     }
 
     // waiting 状態：通常の新規参加
     // 同名チェック
-    const existingName = room.players.find(
-      p => p.name === playerName.trim()
-    );
+    const trimmedName = playerName.trim().substring(0, 20);
+    const existingName = room.players.find(p => p.name === trimmedName);
+    // 切断中の本人（ロビーでの再読み込みなど）は再入室として扱う
+    const token = normalizeToken(clientToken);
+    if (existingName && (existingName.disconnected || (token && existingName.token === token))) {
+      if (rejoinGame(socket, room, upperRoomId, trimmedName, token, 'error')) {
+        console.log(`プレイヤー再参加(ロビー): ${trimmedName} → ルーム ${upperRoomId}`);
+      }
+      return;
+    }
     if (existingName) {
       socket.emit('error', { message: 'その名前はすでに使われています' });
       return;
@@ -474,8 +548,9 @@ io.on('connection', (socket) => {
 
     const player = {
       id: socket.id,
-      name: playerName.trim().substring(0, 20),
-      score: 0
+      name: trimmedName,
+      score: 0,
+      token
     };
 
     room.players.push(player);
@@ -509,6 +584,9 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'ホストのみゲームを開始できます' });
       return;
     }
+
+    // 連打・重複送信でゲームが二重に始まらないようにする
+    if (room.gameState !== 'waiting') return;
 
     if (room.players.length < 2) {
       socket.emit('error', { message: '2人以上で遊べます' });
@@ -559,6 +637,9 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // 重複送信で回答とタイマーがリセットされないようにする
+    if (room.gameState !== 'topic-setting') return;
+
     const trimmedTopic = (topic || '').trim();
     if (!trimmedTopic) {
       socket.emit('error', { message: 'お題を入力してください' });
@@ -581,17 +662,13 @@ io.on('connection', (socket) => {
 
     // 制限時間後に強制的にrevealingフェーズへ
     const timerMs = room.timerDuration || 300000;
+    const roomId = socket.roomId;
     room.submitTimeout5min = setTimeout(() => {
-      const currentRoom = rooms.get(socket.roomId);
+      const currentRoom = rooms.get(roomId);
       if (!currentRoom || currentRoom.gameState !== 'submitting') return;
 
-      console.log(`回答タイムアウト（${timerMs / 60000}分）→ revealing へ強制移行: ルーム ${socket.roomId}`);
-      currentRoom.gameState = 'revealing';
-      currentRoom.openedFlips = new Set();
-      io.to(socket.roomId).emit('all-submitted', {
-        players: currentRoom.players.map(p => ({ id: p.id, name: p.name }))
-      });
-      autoOpenAnswerlessFlips(currentRoom, socket.roomId, io);
+      console.log(`回答タイムアウト（${timerMs / 60000}分）→ revealing へ強制移行: ルーム ${roomId}`);
+      startRevealing(currentRoom, roomId);
     }, timerMs);
 
     // 全員に回答入力画面へ（timerDuration も送信してクライアントのタイマー表示に使用）
@@ -646,34 +723,15 @@ io.on('connection', (socket) => {
     // テキストは100文字、画像はそのまま保存
     room.answers.set(socket.id, isImage ? processedAnswer : processedAnswer.substring(0, 100));
 
-    const submitted = room.answers.size;
+    // プレイヤーと紐付いた回答だけを数える（フォールバックで先に届いた回答は再入室後に数える）
+    const submitted = countSubmitted(room);
     const total = room.players.length;
-    // 切断後3秒以内は「アクティブ」扱いで待機（一時切断による誤移行を防止）
-    const now = Date.now();
-    const DISCONNECT_GRACE_MS = 3000;
-    const activePlayers = room.players.filter(p =>
-      !p.disconnected || (p.disconnectedAt && now - p.disconnectedAt < DISCONNECT_GRACE_MS)
-    );
-    const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
 
     // 全員に回答数を通知
     io.to(resolvedRoomId).emit('answer-count', { submitted, total });
 
-    // アクティブプレイヤー全員回答完了（または全員回答完了）
-    if (submitted >= total || (activePlayers.length > 0 && activeSubmitted >= activePlayers.length)) {
-      // タイムアウトをクリア
-      if (room.submitTimeout5min) {
-        clearTimeout(room.submitTimeout5min);
-        room.submitTimeout5min = null;
-      }
-      room.gameState = 'revealing';
-      room.openedFlips = new Set(); // フリップ公開済みをリセット
-      // 全員に通知（切断中も含む全プレイヤー情報付き）
-      io.to(resolvedRoomId).emit('all-submitted', {
-        players: room.players.map(p => ({ id: p.id, name: p.name }))
-      });
-      autoOpenAnswerlessFlips(room, resolvedRoomId, io);
-    }
+    // アクティブプレイヤー全員回答完了で revealing へ
+    checkAllSubmitted(room, resolvedRoomId);
 
     console.log(`回答受付: ${submitted}/${total} ルーム ${resolvedRoomId}`);
   });
@@ -703,6 +761,23 @@ io.on('connection', (socket) => {
     });
   });
 
+  // --- 全員のフリップを公開（ホストのみ。開かない人がいても進められるように） ---
+  socket.on('open-all-flips', () => {
+    const room = rooms.get(socket.roomId);
+    if (!room || room.hostId !== socket.id || room.gameState !== 'revealing') return;
+
+    room.players.filter(p => !room.openedFlips.has(p.id)).forEach(player => {
+      room.openedFlips.add(player.id);
+      io.to(socket.roomId).emit('flip-opened', {
+        playerId: player.id,
+        playerName: player.name,
+        answer: room.answers.get(player.id) || null,
+        openedCount: room.openedFlips.size,
+        total: room.players.length
+      });
+    });
+  });
+
   // --- 正解マーク（ホストのみ、複数選択トグル） ---
   socket.on('mark-correct', ({ answer }) => {
     const room = rooms.get(socket.roomId);
@@ -712,6 +787,8 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'ホストのみ正解を選べます' });
       return;
     }
+
+    if (room.gameState !== 'revealing') return;
 
     if (room.correctAnswers.has(answer)) {
       room.correctAnswers.delete(answer);
@@ -735,6 +812,9 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'ホストのみラウンドを終了できます' });
       return;
     }
+
+    // 連打・重複送信による二重加点を防ぐ
+    if (room.gameState !== 'revealing') return;
 
     room.players.forEach(player => {
       const playerAnswer = room.answers.get(player.id);
@@ -770,6 +850,9 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'ホストのみ次のラウンドへ進めます' });
       return;
     }
+
+    // 連打・重複送信によるラウンド飛ばしを防ぐ
+    if (room.gameState !== 'results') return;
 
     if (room.currentRound >= room.totalRounds) {
       // ゲーム終了
@@ -813,7 +896,7 @@ io.on('connection', (socket) => {
   });
 
   // --- 途中入室（再入室） ---
-  socket.on('rejoin-room', ({ roomId, playerName }) => {
+  socket.on('rejoin-room', ({ roomId, playerName, clientToken }) => {
     if (!playerName || typeof playerName !== 'string' || playerName.trim() === '') {
       socket.emit('rejoin-error', { message: 'プレイヤー名を入力してください' });
       return;
@@ -834,120 +917,9 @@ io.on('connection', (socket) => {
 
     const trimmedName = playerName.trim().substring(0, 20);
 
-    // 既存プレイヤーかどうか確認（同名で再入室）
-    const existingPlayer = room.players.find(p => p.name === trimmedName);
-    let wasHost = false;
-    let hasSubmitted = false;
-
-    if (existingPlayer) {
-      // 切断セッションのタイムアウトをキャンセル
-      const sessionKey = trimmedName + ':' + upperRoomId;
-      if (disconnectSessions.has(sessionKey)) {
-        clearTimeout(disconnectSessions.get(sessionKey).timer);
-        disconnectSessions.delete(sessionKey);
-        console.log(`切断セッションキャンセル（再入室）: ${trimmedName}`);
-      }
-
-      // ID更新前に回答済みかチェック（古いIDで保存されているため）
-      hasSubmitted = room.answers.has(existingPlayer.id);
-      // 回答がある場合は新しいIDに紐付け直す
-      if (hasSubmitted) {
-        const existingAnswer = room.answers.get(existingPlayer.id);
-        room.answers.delete(existingPlayer.id);
-        room.answers.set(socket.id, existingAnswer);
-      }
-      // openedFlipsも更新
-      if (room.openedFlips && room.openedFlips.has(existingPlayer.id)) {
-        room.openedFlips.delete(existingPlayer.id);
-        room.openedFlips.add(socket.id);
-      }
-      // ホストが再入室した場合は room.hostId も更新
-      if (room.hostId === existingPlayer.id) {
-        wasHost = true;
-        room.hostId = socket.id;
-      }
-      // 既存プレイヤーのソケットIDを更新（再接続扱い）＆切断フラグ解除
-      existingPlayer.id = socket.id;
-      existingPlayer.disconnected = false;
-      existingPlayer.disconnectedAt = null;
-    } else {
-      // 新規として追加（途中参加）
-      room.players.push({
-        id: socket.id,
-        name: trimmedName,
-        score: 0
-      });
+    if (rejoinGame(socket, room, upperRoomId, trimmedName, normalizeToken(clientToken), 'rejoin-error')) {
+      console.log(`プレイヤー再入室: ${trimmedName} → ルーム ${upperRoomId} (状態: ${room.gameState})`);
     }
-
-    socket.join(upperRoomId);
-    socket.roomId = upperRoomId;
-
-    // ホスト判定
-    const isRejoinHost = room.hostId === socket.id;
-
-    // 現在のゲーム状態を送信
-    const gameStateInfo = {
-      roomId: upperRoomId,
-      playerId: socket.id,
-      hostId: room.hostId,
-      isHost: isRejoinHost,
-      gameState: room.gameState,
-      currentRound: room.currentRound,
-      totalRounds: room.totalRounds,
-      topic: room.topic,
-      players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
-      hasSubmitted: hasSubmitted,
-      submittedCount: room.answers.size,
-      totalCount: room.players.length,
-      openedFlipCount: room.openedFlips ? room.openedFlips.size : 0,
-      submittingStartedAt: room.submittingStartedAt || null,
-      timerDuration: room.timerDuration || 300000
-    };
-
-    socket.emit('rejoin-success', gameStateInfo);
-
-    // submitting状態でかつ全アクティブプレイヤーが回答済みなら all-submitted を発火
-    if (room.gameState === 'submitting') {
-      const activePlayers = room.players.filter(p => !p.disconnected);
-      const activeSubmitted = activePlayers.filter(p => room.answers.has(p.id)).length;
-      if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
-        if (room.submitTimeout5min) {
-          clearTimeout(room.submitTimeout5min);
-          room.submitTimeout5min = null;
-        }
-        room.gameState = 'revealing';
-        room.openedFlips = new Set();
-        io.to(upperRoomId).emit('all-submitted', {
-          players: room.players.map(p => ({ id: p.id, name: p.name }))
-        });
-        autoOpenAnswerlessFlips(room, upperRoomId, io);
-        console.log(`rejoin後 全員提出完了: ルーム ${upperRoomId}`);
-      }
-    }
-
-    // revealing中に再接続したプレイヤーが未公開なら自動でフリップ公開
-    // （回答なしで再接続した場合も openedFlips に含め、openedCount >= total が達成できるようにする）
-    if (room.gameState === 'revealing' && !room.openedFlips.has(socket.id)) {
-      const answer = room.answers.get(socket.id) || null;
-      room.openedFlips.add(socket.id);
-      io.to(upperRoomId).emit('flip-opened', {
-        playerId: socket.id,
-        playerName: trimmedName,
-        answer: answer,
-        openedCount: room.openedFlips.size,
-        total: room.players.length
-      });
-      console.log(`rejoin中 自動フリップ公開: ${trimmedName} ルーム ${upperRoomId}`);
-    }
-
-    // 既存プレイヤーに通知
-    socket.to(upperRoomId).emit('player-rejoined', {
-      playerName: trimmedName,
-      players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
-      hostId: room.hostId
-    });
-
-    console.log(`プレイヤー再入室: ${trimmedName} → ルーム ${upperRoomId} (状態: ${room.gameState})`);
   });
 
   // --- 切断処理 ---
@@ -984,7 +956,7 @@ io.on('connection', (socket) => {
     // 一時的な切断による誤移行を防ぐため3秒後にチェック
     if (room.gameState === 'submitting') {
       const total = room.players.length;
-      const submitted = room.answers.size;
+      const submitted = countSubmitted(room);
       io.to(roomId).emit('answer-count', { submitted, total });
 
       setTimeout(() => {
@@ -996,37 +968,21 @@ io.on('connection', (socket) => {
         );
         if (!stillDisconnected) return;
 
-        const activePlayers = currentRoom.players.filter(p => !p.disconnected);
-        const activeSubmitted = activePlayers.filter(p => currentRoom.answers.has(p.id)).length;
-
-        if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
-          if (currentRoom.submitTimeout5min) {
-            clearTimeout(currentRoom.submitTimeout5min);
-            currentRoom.submitTimeout5min = null;
-          }
-          currentRoom.gameState = 'revealing';
-          currentRoom.openedFlips = new Set();
-          io.to(roomId).emit('all-submitted', {
-            players: currentRoom.players.map(p => ({ id: p.id, name: p.name }))
-          });
-          autoOpenAnswerlessFlips(currentRoom, roomId, io);
-        }
-      }, 3000);
+        checkAllSubmitted(currentRoom, roomId);
+      }, DISCONNECT_GRACE_MS + 100);
     }
 
-    // revealing フェーズで未公開の場合、自動でフリップ公開して進行を継続
+    // revealing フェーズで未公開の場合、猶予後もまだ切断中なら自動でフリップ公開して進行を継続
     if (room.gameState === 'revealing') {
-      const answer = room.answers.get(socket.id);
-      if (answer && !room.openedFlips.has(socket.id)) {
-        room.openedFlips.add(socket.id);
-        io.to(roomId).emit('flip-opened', {
-          playerId: socket.id,
-          playerName: disconnectedPlayer.name,
-          answer: answer,
-          openedCount: room.openedFlips.size,
-          total: room.players.length
-        });
-      }
+      setTimeout(() => {
+        const currentRoom = rooms.get(roomId);
+        if (!currentRoom || currentRoom.gameState !== 'revealing') return;
+        const stillDisconnected = currentRoom.players.find(
+          p => p.name === disconnectedPlayer.name && p.disconnected
+        );
+        if (!stillDisconnected) return;
+        autoOpenAnswerlessFlips(currentRoom, roomId, io);
+      }, DISCONNECT_GRACE_MS + 100);
     }
 
     // 30秒後にセッションを本当に削除
@@ -1052,6 +1008,7 @@ io.on('connection', (socket) => {
       if (currentRoom.openedFlips) currentRoom.openedFlips.delete(playerId);
 
       if (currentRoom.players.length === 0) {
+        if (currentRoom.submitTimeout5min) clearTimeout(currentRoom.submitTimeout5min);
         rooms.delete(roomId);
         console.log(`ルーム削除（全員退出）: ${roomId}`);
         return;
@@ -1062,7 +1019,10 @@ io.on('connection', (socket) => {
         const nextActive = currentRoom.players.find(p => !p.disconnected) || currentRoom.players[0];
         currentRoom.hostId = nextActive.id;
         io.to(nextActive.id).emit('host-promoted', {
-          message: 'あなたがホストになりました'
+          message: 'あなたがホストになりました',
+          // 公開中なら新ホストの画面で正解選択を復元できるよう公開状況を送る
+          openedFlips: currentRoom.gameState === 'revealing' ? getOpenedFlips(currentRoom) : [],
+          allOpened: currentRoom.players.every(p => currentRoom.openedFlips.has(p.id))
         });
         console.log(`ホスト昇格: ${nextActive.name} ルーム ${roomId}`);
       }
@@ -1072,26 +1032,9 @@ io.on('connection', (socket) => {
       });
 
       // submitting フェーズ再チェック
-      if (currentRoom.gameState === 'submitting' && currentRoom.players.length > 0) {
-        const activePlayers = currentRoom.players.filter(p => !p.disconnected);
-        const activeSubmitted = activePlayers.filter(p => currentRoom.answers.has(p.id)).length;
-        const submitted = currentRoom.answers.size;
-        const total = currentRoom.players.length;
-
-        io.to(roomId).emit('answer-count', { submitted, total });
-
-        if (activePlayers.length > 0 && activeSubmitted >= activePlayers.length) {
-          if (currentRoom.submitTimeout5min) {
-            clearTimeout(currentRoom.submitTimeout5min);
-            currentRoom.submitTimeout5min = null;
-          }
-          currentRoom.gameState = 'revealing';
-          currentRoom.openedFlips = new Set();
-          io.to(roomId).emit('all-submitted', {
-            players: currentRoom.players.map(p => ({ id: p.id, name: p.name }))
-          });
-          autoOpenAnswerlessFlips(currentRoom, roomId, io);
-        }
+      if (currentRoom.gameState === 'submitting') {
+        io.to(roomId).emit('answer-count', { submitted: countSubmitted(currentRoom), total: currentRoom.players.length });
+        checkAllSubmitted(currentRoom, roomId);
       }
     }, DISCONNECT_TIMEOUT_MS);
 

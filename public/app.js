@@ -13,6 +13,22 @@ const socket = io({
   timeout: 20000
 });
 
+// ブラウザごとの識別トークン（同名の別人による乗っ取り防止・再読み込み後の本人確認用）
+const clientToken = (() => {
+  const key = 'asamade-client-token';
+  const generate = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+  try {
+    let token = localStorage.getItem(key);
+    if (!token) {
+      token = generate();
+      localStorage.setItem(key, token);
+    }
+    return token;
+  } catch (e) {
+    return generate();
+  }
+})();
+
 // ゲーム状態
 let myPlayerId = null;
 let myRoomId = null;
@@ -39,6 +55,8 @@ let redoStack = [];
 let submitTimerInterval = null;
 let submittingStartedAt = null;
 let submitTimerDurationMs = 300000; // 5分（サーバーから topic-set で上書きされる）
+let currentSubmitKey = null; // 現在の回答ラウンドの識別子（サーバーの submittingStartedAt）
+let lastSubmitted = null;    // 最後に送信した回答 { key, answer }（再接続で届かなかった場合に再送する）
 
 // ======================================
 // 描画タイマー管理
@@ -196,7 +214,11 @@ function renderWaitingPlayers() {
 // ======================================
 // ローカルストレージ
 // ======================================
+// このタブで使っている名前（複数タブで別名参加しても再接続時に取り違えないようタブごとに保持）
+let myPlayerName = null;
+
 function savePlayerName(name) {
+  myPlayerName = name;
   try {
     localStorage.setItem('asamade_player_name', name);
   } catch (e) { /* 無視 */ }
@@ -673,7 +695,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     savePlayerName(name);
-    socket.emit('create-room', { playerName: name });
+    socket.emit('create-room', { playerName: name, clientToken });
   });
 
   // ルーム参加ボタン
@@ -691,7 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     savePlayerName(name);
-    socket.emit('join-room', { roomId: code, playerName: name });
+    socket.emit('join-room', { roomId: code, playerName: name, clientToken });
   });
 
   // Enterキーで参加（ルームコード入力欄）
@@ -781,6 +803,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // base64で圧縮して送信（JPEG、品質0.7）
     const imageData = canvas.toDataURL('image/jpeg', 0.7);
+    lastSubmitted = { key: currentSubmitKey, answer: imageData };
     socket.emit('submit-answer', { answer: imageData, roomId: myRoomId });
 
     // 送信後UI更新
@@ -807,6 +830,11 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.disabled = true;
     btn.textContent = '公開済み！';
     socket.emit('open-flip');
+  });
+
+  // 全員のフリップを開くボタン（ホストのみ）
+  document.getElementById('btn-open-all-flips').addEventListener('click', () => {
+    socket.emit('open-all-flips');
   });
 
   // ラウンド終了ボタン
@@ -933,7 +961,7 @@ socket.on('player-left', ({ players }) => {
 });
 
 // --- ホスト昇格 ---
-socket.on('host-promoted', ({ message }) => {
+socket.on('host-promoted', ({ message, openedFlips, allOpened }) => {
   isHost = true;
   hostPlayerId = myPlayerId;
   showToast(message, 3500);
@@ -950,11 +978,13 @@ socket.on('host-promoted', ({ message }) => {
     document.getElementById('screen-topic').querySelector('.form-area').style.display = 'flex';
     document.getElementById('topic-guest-waiting').style.display = 'none';
   } else if (screenId === 'screen-revealing') {
-    // 全員公開済みの場合、正解選択エリアを表示
-    if (allAnswers.length > 0) {
-      enableFlipCardSelection();
-      document.getElementById('host-correct-area').style.display = 'block';
-      document.getElementById('my-flip-controls').style.display = 'none';
+    // サーバーの公開状況で取りこぼしを補い、全員公開済みなら正解選択エリアを表示
+    (openedFlips || []).forEach(f => applyFlipOpened(f.playerId, f.playerName, f.answer));
+    if (allOpened) {
+      showAllOpenedControls();
+    } else {
+      document.getElementById('my-flip-controls').style.display = 'block';
+      updateOpenAllButton();
     }
   } else if (screenId === 'screen-round-result') {
     document.getElementById('result-host-controls').style.display = 'block';
@@ -1003,6 +1033,8 @@ socket.on('random-topic', ({ topic, char }) => {
 // --- お題確定・回答入力開始 ---
 socket.on('topic-set', ({ topic, currentRound, totalRounds, submittingStartedAt: startedAt, timerDuration }) => {
   if (timerDuration) submitTimerDurationMs = timerDuration;
+  currentSubmitKey = startedAt || null;
+  lastSubmitted = null;
   currentRoundNum = currentRound;
   totalRoundsNum = totalRounds;
 
@@ -1086,6 +1118,7 @@ socket.on('all-submitted', ({ players }) => {
   buildFlipGrid(players);
   // フリップ公開ボタンを表示
   document.getElementById('my-flip-controls').style.display = 'block';
+  updateOpenAllButton();
   document.getElementById('host-correct-area').style.display = 'none';
 
   // ラウンドバッジ更新
@@ -1099,6 +1132,30 @@ socket.on('all-submitted', ({ players }) => {
 
 // --- フリップ公開イベント ---
 socket.on('flip-opened', ({ playerId, playerName, answer, openedCount, total }) => {
+  applyFlipOpened(playerId, playerName, answer);
+  // 全員公開済みかチェック
+  if (openedCount >= total) showAllOpenedControls();
+});
+
+// 「全員のフリップを開く」ボタンはホストにだけ表示
+function updateOpenAllButton() {
+  document.getElementById('btn-open-all-flips').style.display = isHost ? '' : 'none';
+}
+
+// 全員のフリップ公開後：公開ボタンを隠し、ホストには正解選択エリアを表示（カード直接タップで選択）
+function showAllOpenedControls() {
+  document.getElementById('my-flip-controls').style.display = 'none';
+  if (isHost) {
+    enableFlipCardSelection();
+    document.getElementById('host-correct-area').style.display = 'block';
+  }
+}
+
+// 1枚のフリップを公開表示する
+function applyFlipOpened(playerId, playerName, answer) {
+  // 同じカードの二重登録を防ぐ（再入室時の復元と通常イベントの重複対策）
+  if (allAnswers.some(a => a.playerId === playerId)) return;
+
   // 該当カードをフリップ
   const card = document.getElementById('card-' + playerId);
   if (card) {
@@ -1123,19 +1180,14 @@ socket.on('flip-opened', ({ playerId, playerName, answer, openedCount, total }) 
   }
 
   // allAnswers に追加（正解選択用）
-  allAnswers.push({ playerId, playerName, answer, isCorrect: false });
-
-  // 全員公開済みかチェック
-  if (openedCount >= total) {
-    // フリップボタンを非表示
-    document.getElementById('my-flip-controls').style.display = 'none';
-    // ホストに正解選択エリアを表示（カード直接タップで選択）
-    if (isHost) {
-      enableFlipCardSelection();
-      document.getElementById('host-correct-area').style.display = 'block';
-    }
+  allAnswers.push({ playerId, playerName, answer, isCorrect: currentCorrectAnswers.has(answer) });
+  if (card && answer && currentCorrectAnswers.has(answer)) card.classList.add('correct-flip');
+  // 自分のフリップが公開されたら公開ボタンを無効化
+  if (playerId === myPlayerId) {
+    const btn = document.getElementById('btn-open-my-flip');
+    if (btn) { btn.disabled = true; btn.textContent = '公開済み！'; }
   }
-});
+}
 
 // フリップグリッドを構築
 function buildFlipGrid(players) {
@@ -1177,7 +1229,12 @@ function enableFlipCardSelection() {
 }
 
 // --- 正解マーク更新（複数選択） ---
-socket.on('correct-marked', ({ answer, selected, selectedAnswers }) => {
+socket.on('correct-marked', ({ selectedAnswers }) => {
+  applyCorrectAnswers(selectedAnswers);
+});
+
+// 選択済みの正解をカードに反映
+function applyCorrectAnswers(selectedAnswers) {
   currentCorrectAnswers = new Set(selectedAnswers || []);
 
   document.querySelectorAll('.flip-card').forEach(card => {
@@ -1190,10 +1247,31 @@ socket.on('correct-marked', ({ answer, selected, selectedAnswers }) => {
       if (card) card.classList.add('correct-flip');
     }
   });
-});
+}
 
 // --- ラウンド終了（correctAnswers配列対応）---
 socket.on('round-ended', ({ scores, correctAnswers, currentRound, totalRounds }) => {
+  renderCorrectAnswers(correctAnswers);
+
+  renderScoreList(scores, 'round-score-list');
+
+  document.getElementById('result-round-badge').textContent = `第${currentRound}ラウンド 結果`;
+
+  if (isHost) {
+    document.getElementById('result-host-controls').style.display = 'block';
+    document.getElementById('result-guest-waiting').style.display = 'none';
+  } else {
+    document.getElementById('result-host-controls').style.display = 'none';
+    document.getElementById('result-guest-waiting').style.display = 'block';
+  }
+
+  resetRevealScreen();
+
+  showScreen('screen-round-result');
+});
+
+// ラウンド結果画面の正解表示
+function renderCorrectAnswers(correctAnswers) {
   const correctDisplay = document.getElementById('correct-answers-display');
   correctDisplay.innerHTML = '';
 
@@ -1220,23 +1298,7 @@ socket.on('round-ended', ({ scores, correctAnswers, currentRound, totalRounds })
       correctDisplay.appendChild(badge);
     });
   }
-
-  renderScoreList(scores, 'round-score-list');
-
-  document.getElementById('result-round-badge').textContent = `第${currentRound}ラウンド 結果`;
-
-  if (isHost) {
-    document.getElementById('result-host-controls').style.display = 'block';
-    document.getElementById('result-guest-waiting').style.display = 'none';
-  } else {
-    document.getElementById('result-host-controls').style.display = 'none';
-    document.getElementById('result-guest-waiting').style.display = 'block';
-  }
-
-  resetRevealScreen();
-
-  showScreen('screen-round-result');
-});
+}
 
 // --- 次のラウンド開始 ---
 socket.on('next-round-started', ({ currentRound, totalRounds, isHost: hostFlag }) => {
@@ -1300,7 +1362,13 @@ socket.on('game-ended', ({ finalScores }) => {
 });
 
 // --- 再入室成功 ---
-socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount, submittingStartedAt: startedAt, timerDuration }) => {
+// 再入室前に表示していた画面か（一時切断からの復帰判定用）
+function wasOnScreen(screenId) {
+  const active = document.querySelector('.screen.active');
+  return !!active && active.id === screenId;
+}
+
+socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameState, currentRound, totalRounds, topic, players, hasSubmitted, submittedCount, totalCount, openedFlips, correctAnswers, submittingStartedAt: startedAt, timerDuration }) => {
   hideReconnectOverlay();
   isRejoinPending = false;
   stopSubmitTimer();
@@ -1336,8 +1404,11 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     if (isHost) {
       document.getElementById('screen-topic').querySelector('.form-area').style.display = 'flex';
       document.getElementById('topic-guest-waiting').style.display = 'none';
-      document.getElementById('input-topic-char').value = '';
-      document.getElementById('input-topic-word').value = '';
+      // お題設定中の一時切断なら入力途中のお題を残す
+      if (!wasOnScreen('screen-topic')) {
+        document.getElementById('input-topic-char').value = '';
+        document.getElementById('input-topic-word').value = '';
+      }
       updateTopicPreview();
     } else {
       document.getElementById('screen-topic').querySelector('.form-area').style.display = 'none';
@@ -1347,11 +1418,20 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
 
   } else if (gameState === 'submitting') {
     // 回答入力画面へ
+    // 同じラウンドへの復帰（一時切断）なら描きかけの絵を残す
+    const sameRound = startedAt && startedAt === currentSubmitKey && wasOnScreen('screen-submitting');
+    currentSubmitKey = startedAt || null;
     const canvas = document.getElementById('answer-canvas');
-    if (canvas) {
+    if (canvas && !sameRound) {
       clearCanvas(canvas);
       undoStack = [];
       redoStack = [];
+    }
+
+    // 送信した回答が切断で届いていなければ自動で再送する
+    if (!hasSubmitted && lastSubmitted && lastSubmitted.key === startedAt) {
+      socket.emit('submit-answer', { answer: lastSubmitted.answer, roomId });
+      hasSubmitted = true;
     }
 
     document.getElementById('submitting-round-badge').textContent = `第${currentRound}ラウンド / 全${totalRounds}ラウンド`;
@@ -1402,15 +1482,17 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     resetRevealScreen();
     buildFlipGrid(players);
 
-    // hasSubmitted=false は自動公開済み（disconnect時にauto-open済み）
-    if (hasSubmitted) {
-      document.getElementById('my-flip-controls').style.display = 'block';
-      showToast('回答公開中です。フリップを開いてください。', 4000);
-    } else {
-      document.getElementById('my-flip-controls').style.display = 'none';
-      showToast('回答公開中です。', 3000);
-    }
+    // 公開済みのフリップと選択済みの正解を復元
+    currentCorrectAnswers = new Set(correctAnswers || []);
+    (openedFlips || []).forEach(f => applyFlipOpened(f.playerId, f.playerName, f.answer));
+    applyCorrectAnswers(correctAnswers);
+
+    // 自分のフリップは再入室時にサーバーが自動公開する（ホストには「全員のフリップを開く」を出す）
+    document.getElementById('my-flip-controls').style.display = isHost ? 'block' : 'none';
+    updateOpenAllButton();
     document.getElementById('host-correct-area').style.display = 'none';
+    if ((openedFlips || []).length >= players.length) showAllOpenedControls();
+    showToast('回答公開中です。', 3000);
 
     showScreen('screen-revealing');
 
@@ -1421,9 +1503,7 @@ socket.on('rejoin-success', ({ roomId, playerId, hostId, isHost: hostFlag, gameS
     renderScoreList(scores, 'round-score-list');
     document.getElementById('result-round-badge').textContent = `第${currentRound}ラウンド 結果`;
 
-    // 正解は再入室時に再表示できないため空表示
-    const correctDisplay = document.getElementById('correct-answers-display');
-    if (correctDisplay) correctDisplay.innerHTML = '<p style="color:var(--color-gray);text-align:center;">再入室のため正解は表示できません</p>';
+    renderCorrectAnswers(correctAnswers);
 
     if (isHost) {
       document.getElementById('result-host-controls').style.display = 'block';
@@ -1459,6 +1539,19 @@ socket.on('rejoin-error', ({ message }) => {
   }
 });
 
+// --- 他のプレイヤーの再接続でIDが変わった ---
+// 以降の flip-opened などは新しいIDで届くため、カードと公開済み回答を付け替える
+socket.on('player-id-changed', ({ oldId, newId }) => {
+  const card = document.getElementById('card-' + oldId);
+  if (card) {
+    card.id = 'card-' + newId;
+    card.dataset.playerId = newId;
+  }
+  allAnswers.forEach(a => { if (a.playerId === oldId) a.playerId = newId; });
+  roomPlayers.forEach(p => { if (p.id === oldId) p.id = newId; });
+  if (hostPlayerId === oldId) hostPlayerId = newId;
+});
+
 // --- 他のプレイヤーが再入室 ---
 socket.on('player-rejoined', ({ playerName, players, hostId }) => {
   if (hostId) hostPlayerId = hostId;
@@ -1483,7 +1576,7 @@ let isRejoinPending = false;
 // --- 接続断 ---
 socket.on('disconnect', (reason) => {
   console.log('切断理由:', reason);
-  isRejoinPending = false; // フラグをリセットして次の reconnect で必ず rejoin を送信
+  isRejoinPending = false; // フラグをリセットして次の接続で必ず rejoin を送信
   // ゲーム中の場合は再接続オーバーレイを表示
   if (myRoomId) {
     showReconnectOverlay('再接続中...<br><small>しばらくお待ちください</small>');
@@ -1492,15 +1585,17 @@ socket.on('disconnect', (reason) => {
   }
 });
 
+// ※ Socket.io v4 では reconnect_attempt / reconnect_failed は Manager（socket.io）のイベント。
+//    socket.on() に登録しても発火しないため socket.io.on() に登録する。
 // --- 再接続試行中 ---
-socket.on('reconnect_attempt', (attemptNumber) => {
+socket.io.on('reconnect_attempt', (attemptNumber) => {
   if (myRoomId) {
     showReconnectOverlay(`再接続中... (試行 ${attemptNumber})<br><small>しばらくお待ちください</small>`);
   }
 });
 
 // --- 再接続失敗（無制限のため通常は発火しないが念のため）---
-socket.on('reconnect_failed', () => {
+socket.io.on('reconnect_failed', () => {
   if (myRoomId) {
     showReconnectOverlay(
       'サーバーから切断されました<br>' +
@@ -1510,26 +1605,19 @@ socket.on('reconnect_failed', () => {
   }
 });
 
-// --- 再接続成功 ---
-socket.on('reconnect', (attemptNumber) => {
-  console.log(`再接続成功 (試行 ${attemptNumber}回目)`);
-  hideReconnectOverlay();
+// --- 接続（初回・再接続とも）---
+// 再接続後のソケットはサーバー上で別IDになりルームにも属していないため、
+// ルーム参加中なら必ず再入室して元のプレイヤーに紐付け直す
+socket.on('connect', () => {
   if (myRoomId && !isRejoinPending) {
-    // 自動的に再入室を試みる
-    const savedName = loadPlayerName();
+    const savedName = myPlayerName || loadPlayerName();
     if (savedName) {
       isRejoinPending = true;
-      showToast('再接続しました。ゲームに復帰しています...', 3000);
-      socket.emit('rejoin-room', { roomId: myRoomId, playerName: savedName });
+      showReconnectOverlay('再接続しました。ゲームに復帰しています...');
+      socket.emit('rejoin-room', { roomId: myRoomId, playerName: savedName, clientToken });
+      return;
     }
   }
-});
-
-// --- 接続（初回）---
-// ※ Socket.io v4 では再接続時は reconnect イベントが先に発火するため
-//    connect は初回接続のみ自動再入室処理を行う必要がない
-//    ただし reconnect イベントが発火しないケース（transport入替時など）のフォールバックとして残す
-socket.on('connect', () => {
   hideReconnectOverlay();
 });
 
@@ -1547,7 +1635,7 @@ socket.on('player-disconnected', ({ playerName, players }) => {
 
 // 手動再入室（再接続失敗時のボタン用）
 function manualRejoin() {
-  const savedName = loadPlayerName();
+  const savedName = myPlayerName || loadPlayerName();
   if (!savedName || !myRoomId) {
     hideReconnectOverlay();
     myRoomId = null;
@@ -1555,5 +1643,5 @@ function manualRejoin() {
     showScreen('screen-home');
     return;
   }
-  socket.emit('rejoin-room', { roomId: myRoomId, playerName: savedName });
+  socket.emit('rejoin-room', { roomId: myRoomId, playerName: savedName, clientToken });
 }
